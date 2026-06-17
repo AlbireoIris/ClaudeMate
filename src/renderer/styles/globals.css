@@ -1,0 +1,106 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ═══════════════════════════════════════
+   浅色主题（默认 :root，没有 dark class 时）
+   ═══════════════════════════════════════ */
+
+:root {
+  --bg-root: #eef0f8;
+  --bg-panel: #f5f6fb;
+  --bg-dialog: #ffffff;
+  --bg-glass: rgba(245, 246, 251, 0.75);
+
+  --text-primary: #1a1a2e;
+  --text-secondary: #6b6b80;
+  --text-muted: #9a9aae;
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-glass: rgba(0, 0, 0, 0.08);
+
+  --accent: #6366f1;
+  --accent-hover: #5558e6;
+  --accent-glow: rgba(99, 102, 241, 0.15);
+
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+}
+
+/* ═══════════════════════════════════════
+   暗色主题（.dark class）
+   ═══════════════════════════════════════ */
+
+.dark {
+  --bg-root: #0f0f1a;
+  --bg-panel: #141425;
+  --bg-dialog: #1a1a2e;
+  --bg-glass: rgba(20, 20, 40, 0.7);
+
+  --text-primary: #e8e8ed;
+  --text-secondary: #9898a8;
+  --text-muted: #5c5c6e;
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-glass: rgba(255, 255, 255, 0.08);
+
+  --accent: #818cf8;
+  --accent-hover: #6366f1;
+  --accent-glow: rgba(129, 140, 248, 0.2);
+
+  --success: #34d399;
+  --warning: #fbbf24;
+  --danger: #f87171;
+}
+
+/* ═══════════════════════════════════════
+   全局重置
+   ═══════════════════════════════════════ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei',
+    'PingFang SC', 'Hiragino Sans GB', sans-serif;
+  background-color: var(--bg-root);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ═══════════════════════════════════════
+   滚动条
+   ═══════════════════════════════════════ */
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border-glass); border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
+
+/* ═══════════════════════════════════════
+   Electron 窗口拖拽
+   ═══════════════════════════════════════ */
+
+.drag-region { -webkit-app-region: drag; }
+.no-drag { -webkit-app-region: no-drag; }
+
+/* 全局允许文本选择 */
+body {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.3);
+  color: inherit;
+}

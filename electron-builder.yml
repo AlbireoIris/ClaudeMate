@@ -1,0 +1,19 @@
+appId: com.iris.claude-code-assistant
+productName: Claude Code Assistant
+directories:
+  output: dist
+  buildResources: build
+files:
+  - out/**/*
+  - "!node_modules/**/*"
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  artifactName: ${name}-${version}-setup.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+extraMetadata:
+  main: out/main/index.js
