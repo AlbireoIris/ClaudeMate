@@ -84,8 +84,8 @@ Effort 级别：`low` / `medium` / `high` / `xhigh` / `max`
 
 ```bash
 # 克隆仓库
-git clone https://github.com/你的用户名/claude-code-assistant.git
-cd claude-code-assistant
+git clone https://github.com/AlbireoIris/ClaudeMate.git
+cd ClaudeMate
 
 # 安装依赖
 npm install
@@ -101,6 +101,7 @@ npm run build
 > ```bash
 > ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" npm install
 > ```
+> 若 Electron postinstall 仍失败，可手动下载后解压到 `node_modules/electron/dist/`，并创建 `node_modules/electron/path.txt` 写入 `electron.exe`。
 
 ## 技术栈
 
@@ -151,6 +152,17 @@ src/
 | 切换侧边栏 | 点击 ☰ 按钮 |
 | 双击文件 | 默认程序打开 |
 | 右键文件 | 弹出操作菜单 |
+
+## 故障排除
+
+| 问题 | 原因 | 解决 |
+|------|------|------|
+| 白屏/空白窗口 | preload 加载失败 | 确认 `node_modules/electron/dist/` 下存在 `electron.exe` |
+| 发送消息无回复 | `~/.claude/settings.json` 未配置 | 检查 `ANTHROPIC_AUTH_TOKEN` 和 `ANTHROPIC_BASE_URL` 是否正确 |
+| 关闭按钮无响应 | 主进程 IPC 未注册 | 重启应用，确认终端无报错 |
+| API 返回空 | 模型名无效 | 仅支持 `deepseek-v4-pro[1m]` 和 `deepseek-v4-flash` |
+| 文件浏览器为空 | 未添加文件夹 | 点击侧边栏「添加文件夹」按钮 |
+| 端口占用 | Vite dev server 冲突 | 应用会自动换端口，或手动杀掉占用进程 |
 
 ## License
 
