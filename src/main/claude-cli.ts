@@ -66,17 +66,63 @@ export async function executeClaudeTask(
     try {
       return await executeWithAPI(config, action, realFiles, userQuery, onProgress)
     } catch (e: any) {
-      onProgress(0, `API 错误: ${e.message || e}`)
+      // API 调用失败：如实把错误透传给用户，不要掩盖成「未配置」
+      const detail = formatApiError(e)
+      onProgress(0, 'API 调用失败')
+      // 有文件时仍可退回本地分析，但要带上 AI 失败的明确提示
+      if (realFiles.length > 0) {
+        const local = await executeLocally('analyze', realFiles, userQuery, onProgress)
+        return `⚠️ AI 调用失败，已退回本地文件分析。\n\n${detail}\n\n---\n\n${local}`
+      }
+      return `❌ AI 调用失败\n\n${detail}`
     }
   }
 
-  // 回退：纯文件分析（无 AI）
+  // 回退：纯文件分析（无 AI 配置）
   if (realFiles.length > 0) {
     return executeLocally('analyze', realFiles, userQuery, onProgress)
   }
 
-  // 纯文本无文件无 API
-  return '未配置 AI API，请选择文件进行操作。'
+  // 纯文本但未配置 AI：明确告知缺什么
+  return [
+    '❌ 未配置 AI API',
+    '',
+    '请在 ~/.claude/settings.json 的 "env" 段配置：',
+    '  • ANTHROPIC_BASE_URL — API 端点地址',
+    '  • ANTHROPIC_AUTH_TOKEN 或 ANTHROPIC_API_KEY — 密钥',
+    '',
+    '两项缺一不可。配置后重新发送消息即可。'
+  ].join('\n')
+}
+
+/** 把 Anthropic SDK / 网络错误翻译成用户能看懂的明确报错 */
+function formatApiError(e: any): string {
+  // Anthropic SDK 错误带 status；fetch 网络错误带 code
+  const status = e?.status ?? e?.statusCode
+  const code = e?.code || e?.cause?.code
+  const rawMsg = e?.error?.error?.message || e?.error?.message || e?.message || String(e)
+
+  if (status === 429) {
+    return `请求过于频繁（HTTP 429 限流）。\n该模型有 RPM 限制，可能正被其他程序占用配额。\n建议：稍等片刻重试，或在底部切换到限流更宽松的模型。\n\n原始信息：${rawMsg}`
+  }
+  if (status === 401 || status === 403) {
+    return `鉴权失败（HTTP ${status}）。\nAPI 密钥无效或无权限，请检查 ~/.claude/settings.json 的 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN。\n\n原始信息：${rawMsg}`
+  }
+  if (status === 404) {
+    return `模型或端点不存在（HTTP 404）。\n请检查模型名与 ANTHROPIC_BASE_URL 是否正确。\n\n原始信息：${rawMsg}`
+  }
+  if (status >= 500) {
+    return `服务端错误（HTTP ${status}）。\n模型服务暂时不可用，请稍后重试。\n\n原始信息：${rawMsg}`
+  }
+  if (code === 'ECONNREFUSED' || code === 'ENOTFOUND' || code === 'ETIMEDOUT' || code === 'EAI_AGAIN') {
+    return `网络连接失败（${code}）。\n无法连接到 API 端点，请检查网络或 ANTHROPIC_BASE_URL 是否可达。\n\n原始信息：${rawMsg}`
+  }
+  // 兜底：把能拿到的状态码 / 信息都带上
+  const parts = ['AI 接口调用出错。']
+  if (status) parts.push(`HTTP 状态：${status}`)
+  if (code) parts.push(`错误码：${code}`)
+  parts.push(`信息：${rawMsg}`)
+  return parts.join('\n')
 }
 
 /** AI API — 使用 Anthropic SDK 流式调用 */

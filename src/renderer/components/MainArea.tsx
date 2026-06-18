@@ -5,6 +5,7 @@ import { useTaskStore } from '../stores/taskStore'
 import { useAppStore } from '../stores/appStore'
 import Sidebar from './Sidebar'
 import SettingsBar from './SettingsBar'
+import logo from '../assets/logo.png'
 import type { FileItem } from '../../shared/types'
 
 function now() { return new Date().toISOString() }
@@ -131,6 +132,7 @@ const MainArea: React.FC = () => {
           <div className="max-w-3xl mx-auto space-y-3 px-4">
             {chatMessages.length === 0 && !isProcessing && (
               <div className="flex flex-col items-center justify-center h-full text-center select-none">
+                <img src={logo} alt="logo" className="w-28 h-28 mb-4" draggable={false} />
                 <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
                   Claude Code Assistant
                 </h2>
