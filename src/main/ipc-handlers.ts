@@ -141,12 +141,22 @@ export function registerIpcHandlers(): void {
       // 也读取 app 自己的覆写配置
       let overrides: any = {}
       try { overrides = JSON.parse(readFileSync(pathJoin(homedir(), '.claude', 'cc-assistant.json'), 'utf-8')) } catch {}
+      // 从 settings.json 收集已配置的真实模型名（mify/小米渠道的 Claude 等），供 UI 下拉选择
+      const slotModels = [
+        s.env?.ANTHROPIC_DEFAULT_OPUS_MODEL,
+        s.env?.ANTHROPIC_DEFAULT_SONNET_MODEL,
+        s.env?.ANTHROPIC_DEFAULT_FABLE_MODEL,
+        s.env?.ANTHROPIC_DEFAULT_HAIKU_MODEL,
+        s.env?.ANTHROPIC_MODEL
+      ].filter(Boolean)
+      const availableModels = [...new Set(slotModels)]
+      const defaultModel = overrides.model || s.env?.ANTHROPIC_DEFAULT_OPUS_MODEL || s.env?.ANTHROPIC_MODEL || availableModels[0] || 'claude-sonnet-4-6'
       return {
-        model: overrides.model || s.env?.ANTHROPIC_MODEL || 'deepseek-v4-pro[1m]',
+        model: defaultModel,
         effort: overrides.effort || s.effortLevel || 'medium',
         thinking: overrides.thinking ?? true,
         baseURL: s.env?.ANTHROPIC_BASE_URL || '',
-        availableModels: ['deepseek-v4-pro[1m]', 'deepseek-v4-flash'],
+        availableModels: availableModels.length ? availableModels : [defaultModel],
         thinkingMandatoryModels: [],
         availableEfforts: ['low', 'medium', 'high', 'xhigh', 'max']
       }

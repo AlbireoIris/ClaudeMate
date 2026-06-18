@@ -21,7 +21,9 @@ function loadClaudeConfig(): ClaudeConfig | null {
     const raw = readFileSync(settingsPath, 'utf-8')
     const settings = JSON.parse(raw)
     const env = settings.env || {}
-    if (env.ANTHROPIC_AUTH_TOKEN && env.ANTHROPIC_BASE_URL) {
+    // 兼容两种密钥写法：ANTHROPIC_AUTH_TOKEN（README 推荐）或 ANTHROPIC_API_KEY（Claude Code 默认）
+    const apiKey = env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY
+    if (apiKey && env.ANTHROPIC_BASE_URL) {
       // 读取 app 覆写配置
       let overrides: any = {}
       try {
@@ -30,8 +32,8 @@ function loadClaudeConfig(): ClaudeConfig | null {
       } catch {}
       return {
         baseURL: env.ANTHROPIC_BASE_URL,
-        apiKey: env.ANTHROPIC_AUTH_TOKEN,
-        model: overrides.model || env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
+        apiKey,
+        model: overrides.model || env.ANTHROPIC_MODEL || env.ANTHROPIC_DEFAULT_OPUS_MODEL || 'claude-sonnet-4-6',
         effort: overrides.effort || 'medium',
         thinking: overrides.thinking || false
       }
