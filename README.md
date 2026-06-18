@@ -1,6 +1,6 @@
 # Claude Code Assistant
 
-> 基于 Electron + React 的 Windows 桌面 AI 文件助手，支持拖放操作、文件管理，通过 DeepSeek API 代理调用 Claude 模型。
+> 基于 Electron + React 的跨平台桌面 AI 文件助手（Windows / Linux），支持拖放操作、文件管理，通过 DeepSeek API 代理调用 Claude 模型。
 
 ## 功能
 
@@ -93,15 +93,53 @@ npm install
 # 启动开发模式
 npm run dev
 
-# 构建生产包
+# 构建生产包(产物在 out/)
 npm run build
+
+# 打包桌面安装包(Windows: nsis / Linux: AppImage + deb)
+npm run package
 ```
 
 > **注意**：`npm install` 后 Electron 可能下载失败（国内网络），如遇此问题请手动设置镜像：
 > ```bash
 > ELECTRON_MIRROR="https://npmmirror.com/mirrors/electron/" npm install
 > ```
-> 若 Electron postinstall 仍失败，可手动下载后解压到 `node_modules/electron/dist/`，并创建 `node_modules/electron/path.txt` 写入 `electron.exe`。
+> 若 Electron postinstall 仍失败，可手动下载后解压到 `node_modules/electron/dist/`，并创建 `node_modules/electron/path.txt`：
+> - **Windows**：写入 `electron.exe`
+> - **Linux**：写入 `electron`（无扩展名,二进制可执行文件）
+
+### Linux (Ubuntu/Debian) 额外要求
+
+Electron 在 Linux 下运行需要一些系统库,以及对 `chrome-sandbox` 的特殊权限。
+
+#### 1. 安装系统依赖
+
+```bash
+sudo apt update
+sudo apt install -y libgbm1 libnss3 libasound2 libatk1.0-0 libatk-bridge2.0-0 \
+  libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 \
+  libxrandr2 libgtk-3-0 libpango-1.0-0 libcairo2 fonts-liberation \
+  libappindicator3-1 xdg-utils
+```
+
+#### 2. chrome-sandbox 权限（dev 模式常见报错）
+
+如果启动时报错 `chrome-sandbox is owned by root and has mode 4755` 或 `SUID sandbox helper binary was found, but is not configured correctly`，二选一：
+
+**方案 A（推荐 dev 模式）**：在 `package.json` 的 `dev` 脚本里加 `--no-sandbox`，或临时使用：
+```bash
+npm run dev -- --no-sandbox
+```
+
+**方案 B（推荐生产）**：给 `chrome-sandbox` 设置 SUID 权限：
+```bash
+sudo chown root:root node_modules/electron/dist/chrome-sandbox
+sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
+```
+
+#### 3. 无显示环境（headless / SSH）
+
+如果在没有图形界面的服务器上构建,只能跑 `npm run build`(纯编译),不能跑 `npm run dev`(需要显示)。要在 SSH 里启动 GUI,可用 X11 转发(`ssh -X`)或 VNC/远程桌面。
 
 ## 技术栈
 
@@ -157,7 +195,9 @@ src/
 
 | 问题 | 原因 | 解决 |
 |------|------|------|
-| 白屏/空白窗口 | preload 加载失败 | 确认 `node_modules/electron/dist/` 下存在 `electron.exe` |
+| 白屏/空白窗口 | preload 加载失败 | 确认 `node_modules/electron/dist/` 下存在 `electron.exe`(Windows) 或 `electron`(Linux) |
+| Linux 启动报 `chrome-sandbox` SUID 错误 | sandbox 权限未配置 | 见上方"Linux 额外要求 §2",加 `--no-sandbox` 或 chmod 4755 |
+| Linux 启动报缺 `libgbm.so.1` / `libnss3.so` | 系统库缺失 | apt install 见上方"Linux 额外要求 §1" |
 | 发送消息无回复 | `~/.claude/settings.json` 未配置 | 检查 `ANTHROPIC_AUTH_TOKEN` 和 `ANTHROPIC_BASE_URL` 是否正确 |
 | 关闭按钮无响应 | 主进程 IPC 未注册 | 重启应用，确认终端无报错 |
 | API 返回空 | 模型名无效 | 仅支持 `deepseek-v4-pro[1m]` 和 `deepseek-v4-flash` |

@@ -2,7 +2,7 @@
   "name": "claude-code-assistant",
   "version": "0.2.0",
   "type": "module",
-  "description": "Claude Code Personal Assistant for Windows — 拖放增强型桌面应用",
+  "description": "Claude Code Personal Assistant — 跨平台拖放增强型桌面应用 (Windows / Linux)",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
