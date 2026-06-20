@@ -1,8 +1,8 @@
 {
-  "name": "claude-code-assistant",
+  "name": "claudemate",
   "version": "0.2.0",
   "type": "module",
-  "description": "Claude Code Personal Assistant for Windows — 拖放增强型桌面应用",
+  "description": "ClaudeMate — Windows 桌面 AI 文件助手，支持拖放操作与智能文件管理",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -13,14 +13,22 @@
   "author": "Iris",
   "license": "MIT",
   "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.85",
+    "@anthropic-ai/claude-code": "2.1.183",
     "@anthropic-ai/sdk": "^0.104.2",
     "@dnd-kit/core": "^6.1.0",
     "@dnd-kit/sortable": "^8.0.0",
     "@dnd-kit/utilities": "^3.2.0",
     "framer-motion": "^11.0.0",
+    "jimp": "^1.6.1",
+    "jsqr": "^1.4.0",
     "lucide-react": "^0.400.0",
+    "opencode-windows-x64": "^0.0.0-dev-202606191740",
+    "playwright": "^1.61.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "sql.js": "^1.14.1",
+    "tesseract.js": "^5.1.1",
     "zustand": "^4.5.0"
   },
   "devDependencies": {

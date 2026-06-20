@@ -1,201 +1,223 @@
-import { readFileSync } from 'fs'
-import { join } from 'path'
-import { homedir } from 'os'
-import Anthropic from '@anthropic-ai/sdk'
-import type { TaskType, FileItem } from '../shared/types'
-import { compressFile, decompressFile, organizeFile, analyzeFile, readTextFile } from './file-system'
+/**
+ * AI 引擎适配层
+ *
+ * 双引擎架构：
+ *   1. opencode (npm) — spawn + NDJSON (稳定，当前默认)
+ *   2. opencode-custom (V2) — HTTP API + SSE (待 @ai-sdk 包可用后启用)
+ *
+ * 二进制查找优先级：项目根 opencode-custom.exe > node_modules > PATH
+ * 运行时使用 run --format json --pure 命令（兼容 V1/V2 的 NDJSON 输出）
+ */
+import { spawn } from 'child_process'
+import { existsSync, readdirSync, statSync } from 'fs'
+import { join, dirname } from 'path'
+import type { FileItem } from '../shared/types'
+import { getActiveProfile } from './config-store'
 
 type ProgressCallback = (progress: number, message: string) => void
+type StreamCallback = (chunk: { type: 'thinking' | 'text'; text: string }) => void
 
-interface ClaudeConfig {
-  baseURL: string
-  apiKey: string
-  model: string
-  effort: string
-  thinking: boolean
-}
+// ═══ 二进制查找 ═══
 
-function loadClaudeConfig(): ClaudeConfig | null {
-  try {
-    const settingsPath = join(homedir(), '.claude', 'settings.json')
-    const raw = readFileSync(settingsPath, 'utf-8')
-    const settings = JSON.parse(raw)
-    const env = settings.env || {}
-    if (env.ANTHROPIC_AUTH_TOKEN && env.ANTHROPIC_BASE_URL) {
-      // 读取 app 覆写配置
-      let overrides: any = {}
-      try {
-        const overridePath = join(homedir(), '.claude', 'cc-assistant.json')
-        overrides = JSON.parse(readFileSync(overridePath, 'utf-8'))
-      } catch {}
-      return {
-        baseURL: env.ANTHROPIC_BASE_URL,
-        apiKey: env.ANTHROPIC_AUTH_TOKEN,
-        model: overrides.model || env.ANTHROPIC_MODEL || 'claude-sonnet-4-6',
-        effort: overrides.effort || 'medium',
-        thinking: overrides.thinking || false
+function findBinary(name: string): string {
+  const cwd = join(__dirname, '../../node_modules')
+  const root = join(__dirname, '../..')
+
+  // 1. 项目根自定义编译版（需验证支持 run 命令）
+  const custom = join(root, 'opencode-custom.exe')
+  if (existsSync(custom)) {
+    console.log('[Engine] found custom binary:', custom)
+    return custom
+  }
+
+  // 2. node_modules 中的 npm 二进制
+  function search(dir: string): string | null {
+    if (!existsSync(dir)) return null
+    try {
+      for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry)
+        if (entry.endsWith('.exe') && full.includes(name) && !full.includes('.old.')) return full
+        try { if (statSync(full).isDirectory() && !entry.startsWith('.')) { const f = search(full); if (f) return f } } catch {}
       }
-    }
+    } catch {}
     return null
-  } catch { return null }
+  }
+
+  const found = search(cwd)
+  if (found) {
+    console.log('[Engine] using npm binary:', found)
+    return found
+  }
+
+  // 3. PATH 回退
+  console.log('[Engine] using PATH:', name)
+  return name
 }
+
+const OPENCODE_BIN = findBinary('opencode')
+console.log('[Engine] resolved binary:', OPENCODE_BIN, 'exists:', existsSync(OPENCODE_BIN))
+
+// ═══ NDJSON 事件解析 ═══
+
+function processEvent(event: any, onStream?: StreamCallback, onProgress?: ProgressCallback): void {
+  const t = event.type
+
+  if (t === 'step_start') {
+    onProgress?.(10, 'AI 分析中...')
+    return
+  }
+
+  if (t === 'text') {
+    const text = event.part?.text
+    if (text) {
+      onStream?.({ type: 'text', text })
+    }
+    return
+  }
+
+  if (t === 'thinking') {
+    const thinking = event.part?.text
+    if (thinking) {
+      onStream?.({ type: 'thinking', text: thinking })
+      onProgress?.(20, '🧠 ' + thinking.slice(-80))
+    }
+    return
+  }
+
+  if (t === 'tool_use') {
+    onProgress?.(40, '🔧 ' + (event.part?.name || '工具'))
+    return
+  }
+
+  if (t === 'step_finish') {
+    onProgress?.(100, '完成')
+    setTimeout(() => onProgress?.(0, ''), 500)
+    return
+  }
+
+  if (t === 'error') {
+    onStream?.({ type: 'text', text: `\n❌ ${event.part?.text || '未知错误'}\n` })
+  }
+}
+
+// ═══ 环境变量注入 ═══
+
+/** 从活跃 Profile 构建 AI 所需的环境变量 */
+function buildEnv(profile: ReturnType<typeof getActiveProfile>): Record<string, string> {
+  const env: Record<string, string> = { ...(process.env as Record<string, string>) }
+
+  // 注入 API 配置为环境变量（OpenCode 引擎从此读取）
+  env.ANTHROPIC_BASE_URL = profile.baseURL
+  env.ANTHROPIC_AUTH_TOKEN = profile.apiKey
+  env.ANTHROPIC_MODEL = profile.model
+  env.NO_COLOR = '1'
+
+  // 根据 model 设置默认模型
+  if (profile.model) {
+    env.ANTHROPIC_DEFAULT_SONNET_MODEL = profile.model
+    env.ANTHROPIC_DEFAULT_HAIKU_MODEL = profile.model
+    env.CLAUDE_CODE_EFFORT_LEVEL = profile.effort || 'medium'
+  }
+
+  return env
+}
+
+// ═══ 主入口 ═══
 
 export async function executeClaudeTask(
   _taskId: string,
-  taskType: TaskType,
+  _taskType: any,
   files: FileItem[],
-  onProgress: ProgressCallback
+  history: { role: string; text: string }[],
+  onProgress: ProgressCallback,
+  onStream?: StreamCallback
 ): Promise<string> {
   const realFiles = files.filter(f => !f.path.startsWith('__query__:'))
   const queryFile = files.find(f => f.path.startsWith('__query__:'))
   const userQuery = queryFile ? queryFile.path.replace('__query__:', '') : ''
 
-  // 判断操作类型
-  const action = detectAction(userQuery, taskType)
+  if (!userQuery && realFiles.length === 0) return '请发送消息或选择文件。'
 
-  // 如果有文件 → 先尝试本地操作（压缩/解压/整理）
-  if (realFiles.length > 0 && (action === 'compress' || action === 'decompress' || action === 'organize')) {
-    return executeLocally(action, realFiles, userQuery, onProgress)
-  }
+  const config = getActiveProfile()
+  if (!config.apiKey || !config.baseURL) return '未配置 API Key。'
 
-  // 如果有文件但需要分析，或有文本查询 → AI API
-  const config = loadClaudeConfig()
-  if (config) {
-    try {
-      return await executeWithAPI(config, action, realFiles, userQuery, onProgress)
-    } catch (e: any) {
-      onProgress(0, `API 错误: ${e.message || e}`)
-    }
-  }
-
-  // 回退：纯文件分析（无 AI）
+  const sysHint = `【硬规则】
+1. 用中文回复。禁止只说"完成"——必须给出具体文件名、路径、执行结果。
+2. 所有写入/删除/修改操作仅限于 H: 盘。读取可以跨盘。
+3. 每完成一步必须汇报结果。`
+  let prompt = sysHint + '\n' + (userQuery || '你好')
   if (realFiles.length > 0) {
-    return executeLocally('analyze', realFiles, userQuery, onProgress)
+    prompt = `${prompt}\n\n文件列表:\n${realFiles.map(f => `- ${f.path} (${f.name})`).join('\n')}`
   }
 
-  // 纯文本无文件无 API
-  return '未配置 AI API，请选择文件进行操作。'
-}
+  const isContinuation = history.length > 0
+  const args = ['run', prompt, '--format', 'json', '--pure']
+  if (isContinuation) args.splice(1, 0, '-c')
 
-/** AI API — 使用 Anthropic SDK 流式调用 */
-async function executeWithAPI(
-  config: ClaudeConfig,
-  action: string,
-  files: FileItem[],
-  query: string,
-  onProgress: ProgressCallback
-): Promise<string> {
-  const anthropic = new Anthropic({ apiKey: config.apiKey, baseURL: config.baseURL })
+  console.log('[Engine]', OPENCODE_BIN, args.join(' '))
 
-  // 构建消息
-  let userContent = query || '你好'
+  // 工作目录：默认 H:\，有附加文件时跟随
+  let workDir = 'H:\\'
+  if (realFiles.length > 0) {
+    const { existsSync: fe } = require('fs')
+    const { statSync: st } = require('fs')
+    const { dirname: dn } = require('path')
+    const p = realFiles[0].path
+    workDir = fe(p) ? (st(p).isDirectory() ? p : dn(p)) : workDir
+  }
+  args.push('--dir', workDir)
 
-  if (files.length > 0) {
-    const fileList = files.map(f => `- ${f.name} (${f.extension || '无扩展名'}, ${f.size} bytes)`).join('\n')
-    userContent = `${query || `请分析以下文件`}\n\n文件列表:\n${fileList}`
+  const env = buildEnv(config)
 
-    // 尝试读取小文本文件
-    for (const f of files) {
-      if (f.size < 50000) {
+  return new Promise((resolve) => {
+    const child = spawn(OPENCODE_BIN, args, {
+      cwd: workDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+    })
+
+    let buf = ''
+
+    child.stdout.on('data', (chunk: Buffer) => {
+      const raw = chunk.toString()
+      console.log('[Engine stdout]', raw.slice(0, 200))
+      buf += raw
+      const lines = buf.split('\n')
+      buf = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.trim()) continue
         try {
-          const content = await readTextFile(f.path)
-          userContent += `\n\n### ${f.name} 内容:\n\`\`\`\n${content.slice(0, 5000)}\n\`\`\``
-        } catch { /* binary file */ }
+          processEvent(JSON.parse(line), onStream, onProgress)
+        } catch {
+          if (!line.startsWith('{')) onStream?.({ type: 'text', text: line + '\n' })
+        }
       }
-    }
-  }
-
-  onProgress(15, 'AI 思考中...')
-
-  // 使用 .stream() 返回的 Stream 对象
-  const params: any = {
-    model: config.model,
-    max_tokens: config.thinking ? 8192 : 4096,
-    system: '你是 Claude Code Assistant，用户桌面上的智能文件助手。用中文简洁回复，不要自我介绍，不要提及你是其他模型。',
-    messages: [{ role: 'user', content: userContent }]
-  }
-  params.thinking = config.thinking
-    ? { type: 'enabled', budget_tokens: 2048 }
-    : { type: 'disabled' }
-  console.log('[API] calling with:', { model: config.model, effort: config.effort, thinking: config.thinking })
-  const stream = anthropic.messages.stream(params)
-
-  let result = ''
-  let thinkingText = ''
-
-  await new Promise<void>((resolve, reject) => {
-    stream.on('text', (text: string) => {
-      result += text
-      onProgress(Math.min(20 + Math.floor(result.length / 30), 90), 'AI 回复中...')
     })
-    stream.on('thinking', (text: string) => {
-      thinkingText += text
-      onProgress(Math.min(5 + Math.floor(thinkingText.length / 20), 15), '🧠 ' + (thinkingText.length > 80 ? thinkingText.slice(-80) : thinkingText))
+
+    child.stderr.on('data', (chunk: Buffer) => {
+      console.error('[Engine stderr]', chunk.toString().slice(0, 300))
     })
-    stream.on('end', () => resolve())
-    stream.on('error', (err: Error) => reject(err))
+
+    child.on('spawn', () => {
+      console.log('[Engine] process spawned, PID:', child.pid)
+      onProgress(5, '启动中...')
+    })
+
+    child.on('close', () => {
+      // 处理残留数据
+      for (const line of buf.split('\n')) {
+        if (!line.trim()) continue
+        try { processEvent(JSON.parse(line), onStream, onProgress) } catch {}
+      }
+      onProgress(100, '完成')
+      setTimeout(() => onProgress(0, ''), 500)
+      resolve('')
+    })
+
+    child.on('error', (err) => {
+      onStream?.({ type: 'text', text: `❌ 启动失败: ${err.message}` })
+      resolve('')
+    })
   })
-
-  onProgress(100, '完成')
-  return result || '(AI 未返回内容)'
-}
-
-/** 本地文件操作 */
-async function executeLocally(
-  action: string,
-  files: FileItem[],
-  query: string,
-  onProgress: ProgressCallback
-): Promise<string> {
-  if (files.length === 0) {
-    return '未选择文件，请拖放文件或点击选择。'
-  }
-
-  const results: string[] = []
-
-  for (let i = 0; i < files.length; i++) {
-    const file = files[i]
-    const pct = Math.round(((i + 1) / files.length) * 100)
-
-    try {
-      switch (action) {
-        case 'compress': {
-          onProgress(pct, `压缩: ${file.name}`)
-          const out = await compressFile(file.path)
-          results.push(`✅ 压缩完成\n  源文件: ${file.name}\n  输出: ${out}`)
-          break
-        }
-        case 'decompress': {
-          onProgress(pct, `解压: ${file.name}`)
-          const out = await decompressFile(file.path)
-          results.push(`✅ 解压完成\n  源文件: ${file.name}\n  输出: ${out}`)
-          break
-        }
-        case 'organize': {
-          onProgress(pct, `整理: ${file.name}`)
-          const out = await organizeFile(file.path)
-          results.push(`✅ 整理完成\n  源文件: ${file.name}\n  移动到: ${out}`)
-          break
-        }
-        default: {
-          onProgress(pct, `分析: ${file.name}`)
-          const info = await analyzeFile(file.path)
-          results.push(info)
-        }
-      }
-    } catch (e: any) {
-      results.push(`❌ ${file.name}: ${e.message}`)
-    }
-  }
-
-  onProgress(100, '处理完成')
-  return results.join('\n\n')
-}
-
-function detectAction(query: string, taskType: TaskType): string {
-  const q = (query + taskType).toLowerCase()
-  if (/解压|decompress|unzip|gunzip/.test(q)) return 'decompress'
-  if (/压缩|compress|zip|gzip/.test(q) || taskType === 'batch-decompress') return 'compress'
-  if (/整理|分类|organize|sort/.test(q) || taskType === 'file-organize') return 'organize'
-  return 'analyze'
 }

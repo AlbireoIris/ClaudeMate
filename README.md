@@ -1,4 +1,4 @@
-# Claude Code Assistant
+# ClaudeMate
 
 > 基于 Electron + React 的 Windows 桌面 AI 文件助手，支持拖放操作、文件管理，通过 DeepSeek API 代理调用 Claude 模型。
 
@@ -16,10 +16,10 @@
 
 ```
 ┌──────────────────────────────────────┐
-│  Claude Code Assistant      🌙 ─ ☐ ✕│
+│  ClaudeMate      🌙 ─ ☐ ✕│
 ├──────────────────────────────────────┤
 │ ☰                                    │
-│         Claude Code Assistant        │
+│         ClaudeMate        │
 │         你的桌面智能文件助手            │
 │                                      │
 │  [📎 选文件] [输入指令...]     [➤]   │

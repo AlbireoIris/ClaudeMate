@@ -24,14 +24,21 @@ const electronAPI = {
   // === 任务 ===
 
   /** 执行任务 */
-  executeTask: (taskId: string, taskType: TaskType, files: FileItem[]) =>
-    ipcRenderer.invoke(IPC_CHANNELS.TASK_EXECUTE, { taskId, taskType, files }),
+  executeTask: (taskId: string, taskType: TaskType, files: FileItem[], history?: { role: string; text: string }[]) =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_EXECUTE, { taskId, taskType, files, history }),
 
   /** 监听任务进度 */
   onTaskProgress: (callback: (data: TaskProgress) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, data: TaskProgress) => callback(data)
     ipcRenderer.on(IPC_CHANNELS.TASK_PROGRESS, handler)
     return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_PROGRESS, handler)
+  },
+
+  /** 监听任务流式输出 */
+  onTaskStream: (callback: (data: { taskId: string; type: string; text: string }) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, data: { taskId: string; type: string; text: string }) => callback(data)
+    ipcRenderer.on(IPC_CHANNELS.TASK_STREAM, handler)
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.TASK_STREAM, handler)
   },
 
   /** 监听任务完成 */
@@ -70,13 +77,25 @@ const electronAPI = {
   openFolder: (folderPath: string): Promise<void> =>
     ipcRenderer.invoke(IPC_CHANNELS.FOLDER_BROWSE, folderPath),
 
-  /** 读取 Claude 配置 */
-  getClaudeConfig: (): Promise<any> =>
-    ipcRenderer.invoke('settings:getClaudeConfig'),
+  /** 读取完整应用配置 */
+  getConfig: (): Promise<any> =>
+    ipcRenderer.invoke('config:get'),
 
-  /** 写入 app 配置覆写 */
-  setAppConfig: (overrides: any): Promise<boolean> =>
-    ipcRenderer.invoke('settings:setAppConfig', overrides),
+  /** 写入指定配置 section */
+  setConfig: (section: string, data: any): Promise<boolean> =>
+    ipcRenderer.invoke('config:set', section, data),
+
+  /** 切换活跃 Profile */
+  switchProfile: (index: number): Promise<any> =>
+    ipcRenderer.invoke('profile:switch', index),
+
+  /** 获取所有 Profile */
+  getProfiles: (): Promise<any[]> =>
+    ipcRenderer.invoke('profile:list'),
+
+  /** 更新当前 Profile 的单个字段 */
+  updateProfileField: (field: string, value: any): Promise<any> =>
+    ipcRenderer.invoke('profile:updateField', field, value),
 
   /** 用默认程序打开文件 */
   openFile: (filePath: string): Promise<void> =>
@@ -99,7 +118,108 @@ const electronAPI = {
   // === 文件对话框 ===
 
   openFileDialog: (): Promise<string[] | null> =>
-    ipcRenderer.invoke('dialog:openFile')
+    ipcRenderer.invoke('dialog:openFile'),
+
+  // === 会话持久化 ===
+
+  /** 创建新会话 */
+  createSession: (meta?: { title?: string; model?: string; effort?: string; thinking?: boolean }): Promise<any> =>
+    ipcRenderer.invoke('session:create', meta || {}),
+
+  /** 列出所有会话 */
+  listSessions: (): Promise<any[]> =>
+    ipcRenderer.invoke('session:list'),
+
+  /** 获取单个会话 */
+  getSession: (sessionId: string): Promise<any> =>
+    ipcRenderer.invoke('session:get', sessionId),
+
+  /** 保存会话消息（全量覆盖） */
+  saveSessionMessages: (sessionId: string, messages: { role: string; text: string; time: string }[]): Promise<boolean> =>
+    ipcRenderer.invoke('session:saveMessage', { sessionId, messages }),
+
+  /** 追加单条消息 */
+  appendSessionMessage: (sessionId: string, message: { role: string; text: string; time: string }): Promise<boolean> =>
+    ipcRenderer.invoke('session:appendMessage', { sessionId, message }),
+
+  /** 删除会话 */
+  deleteSession: (sessionId: string): Promise<boolean> =>
+    ipcRenderer.invoke('session:delete', sessionId),
+
+  // === ADB ===
+
+  listAdbDevices: (): Promise<any[]> =>
+    ipcRenderer.invoke('adb:listDevices'),
+
+  adbScreenshot: (serial: string): Promise<{ base64: string; path: string } | null> =>
+    ipcRenderer.invoke('adb:screenshot', serial),
+
+  adbShell: (serial: string, command: string): Promise<string> =>
+    ipcRenderer.invoke('adb:shell', { serial, command }),
+
+  adbTap: (serial: string, x: number, y: number): Promise<boolean> =>
+    ipcRenderer.invoke('adb:tap', { serial, x, y }),
+
+  adbSwipe: (serial: string, x1: number, y1: number, x2: number, y2: number, duration?: number): Promise<boolean> =>
+    ipcRenderer.invoke('adb:swipe', { serial, x1, y1, x2, y2, duration }),
+
+  adbInputText: (serial: string, text: string): Promise<boolean> =>
+    ipcRenderer.invoke('adb:inputText', { serial, text }),
+
+  adbOcr: (imagePath: string): Promise<{ text: string; confidence: number }[]> =>
+    ipcRenderer.invoke('adb:ocr', imagePath),
+
+  adbTesseractAvailable: (): Promise<boolean> =>
+    ipcRenderer.invoke('adb:tesseractAvailable'),
+
+  // === 网页抓取 ===
+
+  scrapePage: (url: string): Promise<any> =>
+    ipcRenderer.invoke('scraper:scrape', url),
+
+  downloadFile: (url: string, filename?: string): Promise<any> =>
+    ipcRenderer.invoke('scraper:download', { url, filename }),
+
+  extractArchive: (filePath: string, passwords?: string[]): Promise<any> =>
+    ipcRenderer.invoke('scraper:extract', { filePath, passwords }),
+
+  scrapeAndDownload: (url: string): Promise<any> =>
+    ipcRenderer.invoke('scraper:scrapeAndDownload', url),
+
+  // === 游戏助手 ===
+
+  gameStatus: (): Promise<any> =>
+    ipcRenderer.invoke('game:status'),
+
+  maaTasks: (): Promise<string[]> =>
+    ipcRenderer.invoke('game:maaTasks'),
+
+  alasTasks: (): Promise<string[]> =>
+    ipcRenderer.invoke('game:alasTasks'),
+
+  startMaaTask: (taskName: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('game:startMaa', taskName),
+
+  startAlasTask: (command: string, configName?: string): Promise<{ success: boolean; error?: string }> =>
+    ipcRenderer.invoke('game:startAlas', { command, configName }),
+
+  stopMaa: (): Promise<boolean> =>
+    ipcRenderer.invoke('game:stopMaa'),
+
+  stopAlas: (): Promise<boolean> =>
+    ipcRenderer.invoke('game:stopAlas'),
+
+  onMaaLog: (callback: (msg: string) => void) => {
+    const handler = (_e: any, msg: string) => callback(msg)
+    ipcRenderer.on('game:maaLog', handler)
+    return () => ipcRenderer.removeListener('game:maaLog', handler)
+  },
+
+  onAlasLog: (callback: (msg: string) => void) => {
+    const handler = (_e: any, msg: string) => callback(msg)
+    ipcRenderer.on('game:alasLog', handler)
+    return () => ipcRenderer.removeListener('game:alasLog', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

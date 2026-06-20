@@ -32,7 +32,7 @@ const Select: React.FC<{
       </button>
       {open && (
         <div
-          className="absolute bottom-full left-0 mb-1 rounded-lg border shadow-lg py-1 z-[100] min-w-[140px]"
+          className="absolute bottom-full left-0 mb-1 rounded-lg border shadow-lg py-1 z-[100] min-w-[140px] max-h-[240px] overflow-y-auto"
           style={{
             backgroundColor: 'var(--bg-panel)',
             borderColor: 'var(--border-glass)',
@@ -60,30 +60,39 @@ const SettingsBar: React.FC = () => {
   const [config, setConfig] = useState<any>(null)
 
   useEffect(() => {
-    window.electronAPI.getClaudeConfig().then(c => {
-      console.log('[Settings] loaded:', c)
-      setConfig(c)
+    window.electronAPI.getConfig().then(c => {
+      const claude = c?.claude || {}
+      const profs = claude.profiles || []
+      const idx = claude.activeProfile ?? 0
+      const active = profs[idx] || profs[0] || {}
+
+      setConfig({
+        ...active,
+        availableModels: ['deepseek-v4-pro[1m]', 'deepseek-v4-flash'],
+        availableEfforts: ['low', 'medium', 'high', 'xhigh', 'max']
+      })
     }).catch(() => {})
   }, [])
 
   if (!config) return null
 
-  const mandatoryModels = config.thinkingMandatoryModels || []
-  const isMandatory = mandatoryModels.includes(config.model)
+  // DeepSeek 模型强制开启 thinking，其他模型可切换
+  const isThinkMandatory = (config.model || '').includes('deepseek')
+  const thinkingOn = isThinkMandatory || config.thinking
 
-  const set = (key: string, val: any) => {
+  const set = async (key: string, val: any) => {
     const next = { ...config, [key]: val }
-    // 切换模型时，自动设置 thinking 状态
-    if (key === 'model' && mandatoryModels.includes(val)) {
-      next.thinking = true
-    }
     setConfig(next)
-    window.electronAPI.setAppConfig({ model: next.model, effort: next.effort, thinking: next.thinking })
-    console.log('[Settings] updated:', key, '=', val, '→ full:', { model: next.model, effort: next.effort, thinking: next.thinking })
+    try {
+      await window.electronAPI.updateProfileField(key, val)
+      console.log('[Settings] updated:', key, '=', val)
+    } catch (e) {
+      console.error('[Settings] update failed:', e)
+    }
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-4 pt-[6px] pb-3 flex items-center gap-3 flex-wrap">
+    <div className="max-w-3xl mx-auto px-4 pt-[6px] pb-3 flex items-center justify-center gap-3 flex-wrap">
       {/* 模型 */}
       <Select
         icon={<Brain size={16} style={{ color: 'var(--accent)' }} />}
@@ -92,19 +101,18 @@ const SettingsBar: React.FC = () => {
         onChange={v => set('model', v)}
       />
 
-      {/* 思考模式 */}
+      {/* Thinking — DeepSeek 强制开启，锁定 */}
       <button
-        onClick={() => { if (!isMandatory) set('thinking', !config.thinking) }}
+        onClick={() => { if (!isThinkMandatory) set('thinking', !config.thinking) }}
         className="flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition-all duration-150"
         style={{
-          borderColor: config.thinking ? 'var(--accent)' : 'var(--border-glass)',
-          backgroundColor: config.thinking ? 'var(--accent-light)' : 'var(--bg-dialog)',
-          color: config.thinking ? 'var(--accent)' : 'var(--text-muted)',
-          cursor: isMandatory ? 'default' : 'pointer',
-          opacity: isMandatory ? 1 : undefined
+          borderColor: thinkingOn ? 'var(--accent)' : 'var(--border-glass)',
+          backgroundColor: thinkingOn ? 'var(--accent-light)' : 'var(--bg-dialog)',
+          color: thinkingOn ? 'var(--accent)' : 'var(--text-muted)',
+          cursor: isThinkMandatory ? 'default' : 'pointer'
         }}>
         <Lightbulb size={16} />
-        思考{isMandatory ? ' 🔒' : config.thinking ? ' ✓' : ''}
+        {isThinkMandatory ? '思考 🔒' : thinkingOn ? '思考 ✓' : '思考'}
       </button>
 
       {/* Effort */}

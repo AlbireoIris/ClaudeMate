@@ -1,5 +1,5 @@
-appId: com.iris.claude-code-assistant
-productName: Claude Code Assistant
+appId: com.iris.claudemate
+productName: ClaudeMate
 directories:
   output: dist
   buildResources: build

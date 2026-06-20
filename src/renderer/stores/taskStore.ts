@@ -55,7 +55,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }))
   },
 
-  executeTask: async (taskId) => {
+  executeTask: async (taskId, history?: { role: string; text: string }[]) => {
     const task = get().tasks.find(t => t.id === taskId)
     if (!task || task.status !== 'pending') return
 
@@ -63,8 +63,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     get().updateTask(taskId, { status: 'running', progress: 0, message: '开始执行...' })
 
     try {
-      // 通过 IPC 调用主进程执行任务
-      const result = await window.electronAPI.executeTask(taskId, task.type, task.files)
+      const result = await window.electronAPI.executeTask(taskId, task.type, task.files, history || [])
 
       if (result.success) {
         // 不在此处更新 message — IPC 的 onTaskComplete 会传回真实的 AI 回复

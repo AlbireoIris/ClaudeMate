@@ -1,12 +1,15 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync, rmdirSync, renameSync, statSync } from 'fs'
-import { homedir } from 'os'
 import { join as pathJoin, dirname as pathDirname } from 'path'
 import { app, ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
 import { moveFile, copyFile, getFileInfo, listDirectory } from './file-system'
-import { executeClaudeTask } from './claude-cli'
-import { getStoredFolders, addStoredFolder, removeStoredFolder } from './settings'
+import { executeClaudeTask } from './claude-cli-serve'
+import { getStoredFolders, addStoredFolder, removeStoredFolder, loadConfig, updateConfig, switchProfile, getProfiles, getActiveProfile, updateActiveProfileField } from './config-store'
 import { getMainWindow } from './index'
+import * as SessionStore from './session-store'
+import * as Adb from './adb'
+import * as WebScraper from './web-scraper'
+import * as GameAssistant from './game-assistant'
 import type { TaskType, FileItem } from '../shared/types'
 
 export function registerIpcHandlers(): void {
@@ -69,6 +72,7 @@ export function registerIpcHandlers(): void {
     taskId: string
     taskType: TaskType
     files: FileItem[]
+    history?: { role: string; text: string }[]
   }) => {
     const win = BrowserWindow.fromWebContents(event.sender) || getMainWindow()
     try {
@@ -76,11 +80,19 @@ export function registerIpcHandlers(): void {
         payload.taskId,
         payload.taskType,
         payload.files,
+        payload.history || [],
         (progress, message) => {
           win?.webContents.send(IPC_CHANNELS.TASK_PROGRESS, {
             taskId: payload.taskId,
             progress,
             message
+          })
+        },
+        (chunk) => {
+          win?.webContents.send(IPC_CHANNELS.TASK_STREAM, {
+            taskId: payload.taskId,
+            type: chunk.type,
+            text: chunk.text
           })
         }
       )
@@ -133,34 +145,31 @@ export function registerIpcHandlers(): void {
     return true
   })
 
-  // 读取 Claude 设置
-  ipcMain.handle('settings:getClaudeConfig', async () => {
-    try {
-      const raw = readFileSync(pathJoin(homedir(), '.claude', 'settings.json'), 'utf-8')
-      const s = JSON.parse(raw)
-      // 也读取 app 自己的覆写配置
-      let overrides: any = {}
-      try { overrides = JSON.parse(readFileSync(pathJoin(homedir(), '.claude', 'cc-assistant.json'), 'utf-8')) } catch {}
-      return {
-        model: overrides.model || s.env?.ANTHROPIC_MODEL || 'deepseek-v4-pro[1m]',
-        effort: overrides.effort || s.effortLevel || 'medium',
-        thinking: overrides.thinking ?? true,
-        baseURL: s.env?.ANTHROPIC_BASE_URL || '',
-        availableModels: ['deepseek-v4-pro[1m]', 'deepseek-v4-flash'],
-        thinkingMandatoryModels: [],
-        availableEfforts: ['low', 'medium', 'high', 'xhigh', 'max']
-      }
-    } catch { return null }
+  // === 统一配置 ===
+
+  ipcMain.handle('config:get', async () => {
+    return loadConfig()
   })
 
-  // 写入 app 配置覆写
-  ipcMain.handle('settings:setAppConfig', async (_event, overrides: any) => {
-    try {
-      const configDir = pathJoin(homedir(), '.claude')
-      if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true })
-      writeFileSync(pathJoin(configDir, 'cc-assistant.json'), JSON.stringify(overrides, null, 2), 'utf-8')
-      return true
-    } catch { return false }
+  ipcMain.handle('config:set', async (_event, section: string, data: any) => {
+    updateConfig(section as any, data)
+    return true
+  })
+
+  // === Profile ===
+
+  ipcMain.handle('profile:switch', async (_event, index: number) => {
+    switchProfile(index)
+    return getActiveProfile()
+  })
+
+  ipcMain.handle('profile:list', async () => {
+    return getProfiles()
+  })
+
+  ipcMain.handle('profile:updateField', async (_event, field: string, value: any) => {
+    updateActiveProfileField(field as any, value)
+    return getActiveProfile()
   })
 
   // 用默认程序打开文件
@@ -225,5 +234,132 @@ export function registerIpcHandlers(): void {
     console.log('[IPC] dialog result:', result.canceled ? 'cancelled' : result.filePaths.length + ' files')
     if (result.canceled || result.filePaths.length === 0) return null
     return result.filePaths
+  })
+
+  // === 会话持久化 ===
+
+  ipcMain.handle('session:create', async (_event, meta: {
+    title?: string; model?: string; effort?: string; thinking?: boolean
+  }) => {
+    return SessionStore.createSession(meta)
+  })
+
+  ipcMain.handle('session:list', async () => {
+    return SessionStore.listSessions()
+  })
+
+  ipcMain.handle('session:get', async (_event, sessionId: string) => {
+    return SessionStore.getSession(sessionId)
+  })
+
+  ipcMain.handle('session:saveMessage', async (_event, payload: {
+    sessionId: string; messages: { role: string; text: string; time: string }[]
+  }) => {
+    SessionStore.saveMessage(payload.sessionId, payload.messages)
+    return true
+  })
+
+  ipcMain.handle('session:appendMessage', async (_event, payload: {
+    sessionId: string; message: { role: string; text: string; time: string }
+  }) => {
+    SessionStore.appendMessage(payload.sessionId, payload.message)
+    return true
+  })
+
+  ipcMain.handle('session:delete', async (_event, sessionId: string) => {
+    return SessionStore.deleteSession(sessionId)
+  })
+
+  // === ADB 设备管理 ===
+
+  ipcMain.handle('adb:listDevices', async () => {
+    return Adb.listDevices()
+  })
+
+  ipcMain.handle('adb:screenshot', async (_event, serial: string) => {
+    return Adb.screenshot(serial)
+  })
+
+  ipcMain.handle('adb:shell', async (_event, payload: { serial: string; command: string }) => {
+    return Adb.shell(payload.serial, payload.command)
+  })
+
+  ipcMain.handle('adb:tap', async (_event, payload: { serial: string; x: number; y: number }) => {
+    Adb.tap(payload.serial, payload.x, payload.y)
+    return true
+  })
+
+  ipcMain.handle('adb:swipe', async (_event, payload: {
+    serial: string; x1: number; y1: number; x2: number; y2: number; duration?: number
+  }) => {
+    Adb.swipe(payload.serial, payload.x1, payload.y1, payload.x2, payload.y2, payload.duration)
+    return true
+  })
+
+  ipcMain.handle('adb:inputText', async (_event, payload: { serial: string; text: string }) => {
+    Adb.inputText(payload.serial, payload.text)
+    return true
+  })
+
+  ipcMain.handle('adb:ocr', async (_event, imagePath: string) => {
+    return Adb.ocr(imagePath)
+  })
+
+  ipcMain.handle('adb:tesseractAvailable', async () => {
+    return Adb.ensureTesseract()
+  })
+
+  // === 网页抓取 ===
+
+  ipcMain.handle('scraper:scrape', async (_event, url: string) => {
+    return WebScraper.scrapePage(url)
+  })
+
+  ipcMain.handle('scraper:download', async (_event, payload: { url: string; filename?: string }) => {
+    return WebScraper.downloadFile(payload.url, payload.filename)
+  })
+
+  ipcMain.handle('scraper:extract', async (_event, payload: { filePath: string; passwords?: string[] }) => {
+    return WebScraper.extractArchive(payload.filePath, payload.passwords)
+  })
+
+  ipcMain.handle('scraper:scrapeAndDownload', async (_event, url: string) => {
+    return WebScraper.scrapeAndDownload(url)
+  })
+
+  // === 游戏助手 ===
+
+  ipcMain.handle('game:status', async () => {
+    return GameAssistant.getStatus()
+  })
+
+  ipcMain.handle('game:maaTasks', async () => {
+    return GameAssistant.getArknightsTasks()
+  })
+
+  ipcMain.handle('game:alasTasks', async () => {
+    return GameAssistant.getAzurLaneTasks()
+  })
+
+  ipcMain.handle('game:startMaa', async (_event, taskName: string) => {
+    return GameAssistant.startMaaTask(taskName, (msg) => {
+      getMainWindow()?.webContents.send('game:maaLog', msg)
+    })
+  })
+
+  ipcMain.handle('game:startAlas', async (_event, payload: { command: string; configName?: string }) => {
+    return GameAssistant.startAlasTask(payload.command, payload.configName, (msg) => {
+      getMainWindow()?.webContents.send('game:alasLog', msg)
+    })
+  })
+
+  ipcMain.handle('game:stopMaa', async () => {
+    GameAssistant.stopMaa()
+    return true
+  })
+
+  ipcMain.handle('game:stopAlas', async () => {
+    GameAssistant.stopAlas()
+    return true
   })
 }

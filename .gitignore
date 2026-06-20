@@ -1,6 +1,8 @@
 node_modules/
 out/
 dist/
+config/cc-config.conf
+config/window-state.json
 *.log
 .env
 tsbuildinfo

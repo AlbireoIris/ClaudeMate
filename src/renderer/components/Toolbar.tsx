@@ -1,6 +1,7 @@
 import React from 'react'
 import { Sun, Moon, Minus, Square, X } from 'lucide-react'
 import { useThemeStore } from '../stores/themeStore'
+import logo from '../assets/logo.png'
 
 const Toolbar: React.FC = () => {
   const { theme, toggle } = useThemeStore()
@@ -17,12 +18,9 @@ const Toolbar: React.FC = () => {
       } as React.CSSProperties}
     >
       <div className="flex items-center gap-2.5">
-        <div className="w-5 h-5 rounded-md flex items-center justify-center
-          bg-gradient-to-br from-indigo-500 to-purple-600 shrink-0">
-          <span className="text-[10px] font-bold text-white">C</span>
-        </div>
+        <img src={logo} alt="ClaudeMate" className="w-5 h-5 rounded-md shrink-0" />
         <span className="text-xs font-medium tracking-wide" style={{ color: 'var(--text-secondary)' }}>
-          Claude Code Assistant
+          ClaudeMate
         </span>
       </div>
 

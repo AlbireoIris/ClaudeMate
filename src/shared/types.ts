@@ -52,6 +52,7 @@ export const IPC_CHANNELS = {
   // 任务
   TASK_EXECUTE: 'task:execute',
   TASK_PROGRESS: 'task:progress',
+  TASK_STREAM: 'task:stream',
   TASK_COMPLETE: 'task:complete',
   TASK_ERROR: 'task:error',
 
@@ -61,9 +62,9 @@ export const IPC_CHANNELS = {
   FOLDER_REMOVE: 'folder:remove',
   FOLDER_BROWSE: 'folder:browse',
 
-  // 设置
-  SETTINGS_GET: 'settings:get',
-  SETTINGS_SET: 'settings:set'
+  // 设置（新统一配置通道）
+  SETTINGS_GET: 'config:get',
+  SETTINGS_SET: 'config:set'
 } as const
 
 /** 任务进度数据 */

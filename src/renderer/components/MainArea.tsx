@@ -30,14 +30,46 @@ const MainArea: React.FC = () => {
   const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai'; text: string; time: string }[]>([])
   const [progress, setProgress] = useState(0)
   const [progressMsg, setProgressMsg] = useState('')
+  const [showProgress, setShowProgress] = useState(false)
+  const streamingTaskRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // 暴露恢复会话方法给 SessionHistory 调用
+  useEffect(() => {
+    (window as any).__restoreSession = (messages: { role: string; text: string; time: string }[]) => {
+      setChatMessages(messages)
+      if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+    return () => { delete (window as any).__restoreSession }
+  }, [])
+
   useEffect(() => {
     const task = allTasks.find(t => t.id === activeTaskId)
-    if (task?.status === 'running') { setProgress(task.progress); setProgressMsg(task.message) }
-    else if (!activeTaskId) { setProgress(0); setProgressMsg('') }
+    if (task?.status === 'running') { setProgress(task.progress); setProgressMsg(task.message); setShowProgress(true) }
+    else if (!activeTaskId) { setProgress(0); setProgressMsg(''); setShowProgress(false) }
   }, [allTasks, activeTaskId])
+
+  // 流式输出监听
+  useEffect(() => {
+    const cleanup = window.electronAPI.onTaskStream(({ taskId, type, text }) => {
+      setShowProgress(false)
+      streamingTaskRef.current = taskId
+
+      // thinking → 只在进度条显示
+      if (type === 'thinking') return
+
+      // text → 流式输出到对话框
+      setChatMessages(prev => {
+        const last = prev[prev.length - 1]
+        if (last && last.role === 'ai' && last.time === taskId) {
+          return [...prev.slice(0, -1), { ...last, text: last.text + text }]
+        }
+        return [...prev, { role: 'ai', text, time: taskId }]
+      })
+    })
+    return cleanup
+  }, [])
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -47,6 +79,11 @@ const MainArea: React.FC = () => {
     const shown = new Set(chatMessages.map(m => m.time))
     for (const task of allTasks) {
       if ((task.status === 'completed' || task.status === 'error') && !shown.has(task.id)) {
+        // 流式已处理的不重复添加
+        if (task.id === streamingTaskRef.current) {
+          streamingTaskRef.current = null
+          continue
+        }
         setChatMessages(prev => [...prev, {
           role: 'ai',
           text: task.status === 'error' ? `❌ ${task.error || task.message}` : task.message,
@@ -78,7 +115,9 @@ const MainArea: React.FC = () => {
     setInputValue('')
     clearFiles()
     const taskId = addTask('smart-analyze', taskFiles)
-    setTimeout(() => executeTask(taskId), 50)
+    // 传递最近 20 条聊天记录作为上下文
+    const recentHistory = chatMessages.slice(-20).map(m => ({ role: m.role, text: m.text }))
+    setTimeout(() => executeTask(taskId, recentHistory), 50)
   }, [inputValue, pendingFiles, addTask, executeTask])
 
   const handleDrop = useCallback((e: React.DragEvent) => {
@@ -128,11 +167,11 @@ const MainArea: React.FC = () => {
         <div ref={scrollRef}
           className={`overflow-y-auto pb-2 ${chatMessages.length > 0 ? 'flex-1' : ''}`}
           style={{ userSelect: 'text' }}>
-          <div className="max-w-3xl mx-auto space-y-3 px-4">
+          <div className="max-w-4xl mx-auto space-y-3 px-4">
             {chatMessages.length === 0 && !isProcessing && (
               <div className="flex flex-col items-center justify-center h-full text-center select-none">
                 <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                  Claude Code Assistant
+                  ClaudeMate
                 </h2>
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                   你的桌面智能文件助手
@@ -141,7 +180,7 @@ const MainArea: React.FC = () => {
             )}
             {chatMessages.map((msg, i) => (
               <div key={i} className={`flex ${msg.role === 'user' ? 'justify-start' : 'justify-end'}`}>
-                <div className="max-w-[85%] rounded-2xl px-4 py-2.5 text-base whitespace-pre-wrap break-words"
+                <div className="max-w-[90%] rounded-2xl px-4 py-2.5 text-base whitespace-pre-wrap break-words"
                   style={{
                     userSelect: 'text',
                     backgroundColor: msg.role === 'user' ? 'var(--accent)' : 'var(--bg-dialog)',
@@ -150,9 +189,9 @@ const MainArea: React.FC = () => {
                   }}>{msg.text}</div>
               </div>
             ))}
-            {isProcessing && (
+            {showProgress && isProcessing && (
               <div className="flex justify-end">
-                <div className="max-w-[85%] rounded-2xl px-4 py-3 border w-64"
+                <div className="max-w-[90%] rounded-2xl px-4 py-3 border w-64"
                   style={{ backgroundColor: 'var(--bg-dialog)', borderColor: 'var(--border-glass)' }}>
                   <div className="flex items-center gap-2 mb-2">
                     <Loader size={13} className="animate-spin" style={{ color: progressColor(progress) }} />
@@ -175,7 +214,7 @@ const MainArea: React.FC = () => {
 
         {/* 输入栏 */}
         <div className="shrink-0 pt-2 pb-4">
-          <div className="max-w-3xl mx-auto px-4">
+          <div className="max-w-2xl mx-auto px-4">
             <AnimatePresence>
               {pendingFiles.length > 0 && (
                 <motion.div className="flex gap-2 mb-2 overflow-x-auto pb-1"

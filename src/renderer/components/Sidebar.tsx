@@ -1,7 +1,10 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Folder, FolderPlus, X, Menu, ChevronLeft, FileText, FolderOpen, ExternalLink, ChevronRight, Loader, ArrowRightToLine, Trash2, Pencil, Copy, FileImage, Film, Music, Archive, FileCode } from 'lucide-react'
+import { Folder, FolderPlus, X, Menu, ChevronLeft, FileText, FolderOpen, ExternalLink, ChevronRight, Loader, ArrowRightToLine, Trash2, Pencil, Copy, FileImage, Film, Music, Archive, FileCode, Smartphone, Globe, MessageSquare } from 'lucide-react'
+import AdbPanel from './AdbPanel'
+import WebScraper from './WebScraper'
+import SessionHistory from './SessionHistory'
 import { useAppStore } from '../stores/appStore'
 import type { FileItem, FavoriteFolder } from '../../shared/types'
 
@@ -212,9 +215,12 @@ function fileIcon(ext: string): [React.ReactNode, string] {
   return [<FileText size={18} />, 'var(--text-muted)']
 }
 
+type SidebarTab = 'files' | 'adb' | 'scraper' | 'history'
+
 const Sidebar: React.FC = () => {
   const { folders, foldersLoaded, loadFolders, addFolder, removeFolder, attachFiles } = useAppStore()
   const [isOpen, setIsOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState<SidebarTab>('files')
   const [btnY, setBtnY] = useState(12)
   const [width, setWidth] = useState(280)
   const [expandedFolder, setExpandedFolder] = useState<string | null>(null)
@@ -247,6 +253,23 @@ const Sidebar: React.FC = () => {
       catch { setFolderContents([]) }
       setLoadingDir(false) }
   }, [expandedFolder])
+
+  /** 导入整个文件夹到对话框（显示为文件夹而非逐个文件） */
+  const importFolderContents = useCallback(async (folder: FavoriteFolder) => {
+    try {
+      const items = await window.electronAPI.listDir(folder.path)
+      if (items?.length) {
+        attachFiles([{
+          id: `folder-import-${Date.now()}`,
+          name: `📁 ${folder.name} (${items.length} 项)`,
+          path: folder.path,
+          type: 'folder' as const,
+          extension: '',
+          size: items.reduce((s, i) => s + i.size, 0)
+        }])
+      }
+    } catch {}
+  }, [attachFiles])
 
   return (
     <>
@@ -283,13 +306,46 @@ const Sidebar: React.FC = () => {
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}>
 
               <div className="flex items-center justify-between px-4 py-3 border-b" style={{ borderColor: 'var(--border-subtle)' }}>
-                <span className="text-base font-medium" style={{ color: 'var(--text-primary)' }}>文件浏览器</span>
+                <span className="text-base font-medium" style={{ color: 'var(--text-primary)' }}>
+                  {activeTab === 'files' ? '文件浏览器' : activeTab === 'adb' ? 'ADB 设备' : activeTab === 'scraper' ? '网页抓取' : '会话历史'}
+                </span>
                 <button onClick={() => setIsOpen(false)} className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/[0.08]">
                   <ChevronLeft size={16} style={{ color: 'var(--text-muted)' }} />
                 </button>
               </div>
 
-              <div className="flex-1 overflow-y-auto p-2 space-y-0.5" style={{ willChange: 'transform' }}>
+              {/* Tab bar */}
+              <div className="flex border-b" style={{ borderColor: 'var(--border-subtle)' }}>
+                {([
+                  ['files', Folder, '文件'],
+                  ['adb', Smartphone, 'ADB'],
+                  ['scraper', Globe, '抓取'],
+                  ['history', MessageSquare, '历史'],
+                ] as [SidebarTab, any, string][]).map(([tab, Icon, label]) => (
+                  <button key={tab} onClick={() => setActiveTab(tab)}
+                    className="flex-1 flex items-center justify-center gap-1 py-2 text-[10px] transition-colors border-b-2"
+                    style={{
+                      color: activeTab === tab ? 'var(--accent)' : 'var(--text-muted)',
+                      borderColor: activeTab === tab ? 'var(--accent)' : 'transparent',
+                    }}
+                  >
+                    <Icon size={11} />
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Content */}
+              {activeTab === 'adb' && <AdbPanel />}
+              {activeTab === 'scraper' && <WebScraper />}
+              {activeTab === 'history' && <SessionHistory onRestore={(s) => {
+                if ((window as any).__restoreSession && s.messages) {
+                  (window as any).__restoreSession(s.messages)
+                }
+                setIsOpen(false)
+              }} onClose={() => {}} />}
+
+              <div className="flex-1 overflow-y-auto p-2 space-y-0.5" style={{ willChange: 'transform', display: activeTab === 'files' ? 'block' : 'none' }}>
                 {folders.map((folder, i) => (
                   <div key={folder.id}>
                     <motion.div
@@ -304,6 +360,11 @@ const Sidebar: React.FC = () => {
                         ? <FolderOpen size={16} style={{ color: 'var(--accent)' }} />
                         : <Folder size={16} style={{ color: 'var(--accent)' }} />}
                       <span className="flex-1 text-base truncate select-none" style={{ color: 'var(--text-primary)' }}>{folder.name}</span>
+                      <button onClick={(e) => { e.stopPropagation(); importFolderContents(folder) }}
+                        className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/[0.08]"
+                        title="导入全部文件到对话框">
+                        <ArrowRightToLine size={11} style={{ color: 'var(--accent)' }} />
+                      </button>
                       <button onClick={(e) => { e.stopPropagation(); window.electronAPI.openFolder(folder.path) }}
                         className="p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-black/5 dark:hover:bg-white/[0.08]">
                         <ExternalLink size={11} style={{ color: 'var(--text-muted)' }} />
