@@ -7,3 +7,10 @@ config/window-state.json
 .env
 tsbuildinfo
 
+opencode-custom.exe
+opencode-engine.exe
+*.traineddata
+test-*.mjs
+fetch_with_*.mjs
+decrypt_cookies.mjs
+H:/downloads/
