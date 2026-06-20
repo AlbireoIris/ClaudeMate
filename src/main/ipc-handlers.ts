@@ -10,6 +10,7 @@ import * as SessionStore from './session-store'
 import * as Adb from './adb'
 import * as WebScraper from './web-scraper'
 import * as GameAssistant from './game-assistant'
+import * as DownloadPipeline from './download-pipeline'
 import type { TaskType, FileItem } from '../shared/types'
 
 export function registerIpcHandlers(): void {
@@ -361,5 +362,14 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('game:stopAlas', async () => {
     GameAssistant.stopAlas()
     return true
+  })
+
+  // === 下载管道 ===
+
+  ipcMain.handle('pipeline:run', async (event, pageUrl: string) => {
+    const win = BrowserWindow.fromWebContents(event.sender) || getMainWindow()
+    return DownloadPipeline.runDownloadPipeline(pageUrl, (step) => {
+      win?.webContents.send('pipeline:step', step)
+    })
   })
 }

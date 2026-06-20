@@ -220,6 +220,17 @@ const electronAPI = {
     ipcRenderer.on('game:alasLog', handler)
     return () => ipcRenderer.removeListener('game:alasLog', handler)
   },
+
+  // === 下载管道 ===
+
+  runDownloadPipeline: (pageUrl: string): Promise<any> =>
+    ipcRenderer.invoke('pipeline:run', pageUrl),
+
+  onPipelineStep: (callback: (step: any) => void) => {
+    const handler = (_e: any, step: any) => callback(step)
+    ipcRenderer.on('pipeline:step', handler)
+    return () => ipcRenderer.removeListener('pipeline:step', handler)
+  },
 }
 
 contextBridge.exposeInMainWorld('electronAPI', electronAPI)

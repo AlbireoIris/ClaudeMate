@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Folder, FolderPlus, X, Menu, ChevronLeft, FileText, FolderOpen, ExternalLink, ChevronRight, Loader, ArrowRightToLine, Trash2, Pencil, Copy, FileImage, Film, Music, Archive, FileCode, Smartphone, Globe, MessageSquare } from 'lucide-react'
+import { Folder, FolderPlus, X, Menu, ChevronLeft, FileText, FolderOpen, ExternalLink, ChevronRight, Loader, ArrowRightToLine, Trash2, Pencil, Copy, FileImage, Film, Music, Archive, FileCode, Smartphone, Globe, MessageSquare, Download } from 'lucide-react'
 import AdbPanel from './AdbPanel'
 import WebScraper from './WebScraper'
 import SessionHistory from './SessionHistory'
+import DownloadPipeline from './DownloadPipeline'
 import { useAppStore } from '../stores/appStore'
 import type { FileItem, FavoriteFolder } from '../../shared/types'
 
@@ -215,7 +216,7 @@ function fileIcon(ext: string): [React.ReactNode, string] {
   return [<FileText size={18} />, 'var(--text-muted)']
 }
 
-type SidebarTab = 'files' | 'adb' | 'scraper' | 'history'
+type SidebarTab = 'files' | 'adb' | 'scraper' | 'history' | 'pipeline'
 
 const Sidebar: React.FC = () => {
   const { folders, foldersLoaded, loadFolders, addFolder, removeFolder, attachFiles } = useAppStore()
@@ -320,6 +321,7 @@ const Sidebar: React.FC = () => {
                   ['files', Folder, '文件'],
                   ['adb', Smartphone, 'ADB'],
                   ['scraper', Globe, '抓取'],
+                  ['pipeline', Download, '管道'],
                   ['history', MessageSquare, '历史'],
                 ] as [SidebarTab, any, string][]).map(([tab, Icon, label]) => (
                   <button key={tab} onClick={() => setActiveTab(tab)}
@@ -338,6 +340,7 @@ const Sidebar: React.FC = () => {
               {/* Content */}
               {activeTab === 'adb' && <AdbPanel />}
               {activeTab === 'scraper' && <WebScraper />}
+              {activeTab === 'pipeline' && <DownloadPipeline />}
               {activeTab === 'history' && <SessionHistory onRestore={(s) => {
                 if ((window as any).__restoreSession && s.messages) {
                   (window as any).__restoreSession(s.messages)
