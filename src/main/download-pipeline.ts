@@ -30,11 +30,15 @@ type StepCallback = (step: PipelineStep) => void
 
 // ═══ 工具函数 ═══
 
-/** 读取 Chrome cookie 导出文件 */
-function loadCookies(): string {
+/** 读取 Chrome cookie 导出文件，按域名过滤 */
+function loadCookies(domain?: string): string {
   if (!existsSync(CHROME_COOKIES)) return ''
   const data = JSON.parse(readFileSync(CHROME_COOKIES, 'utf-8'))
-  return data.cookies?.map((c: any) => `${c.name}=${c.value}`).join('; ') || data.cookieString || ''
+  const all = data.cookies?.map((c: any) => `${c.name}=${c.value}`).join('; ') || data.cookieString || ''
+  if (!domain) return all
+  // 筛选匹配域名的 cookie（精确 + 子域名）
+  const filtered = data.cookies?.filter((c: any) => c.domain?.includes(domain.replace(/^https?:\/\//, '').split('/')[0])) || []
+  return filtered.map((c: any) => `${c.name}=${c.value}`).join('; ')
 }
 
 /** 检测文件是否为伪装文件 (MP4头 + ZIP尾) */
@@ -142,7 +146,9 @@ export async function runDownloadPipeline(
     // ═══ Phase 1: 解析网页 ═══
     emit('parse-page', 'running', '解析网页获取解压密码...')
 
-    const cookies = loadCookies()
+    // 提取目标域名用于 cookie 筛选
+    const targetDomain = new URL(pageUrl).hostname
+    const cookies = loadCookies(targetDomain)
     if (!cookies) {
       emit('parse-page', 'error', '未找到 Chrome cookie，请先通过扩展导出')
       return { success: false, steps, finalFiles }
@@ -227,11 +233,14 @@ export async function runDownloadPipeline(
 
     const { chromium } = await import('playwright')
     const cookieData = JSON.parse(readFileSync(CHROME_COOKIES, 'utf-8'))
-    const pwCookies = cookieData.cookies?.map((c: any) => ({
-      name: c.name, value: c.value, domain: c.domain,
-      path: c.path || '/', httpOnly: c.httpOnly || false, secure: c.secure || false,
-      sameSite: 'Lax' as const,
-    })) || []
+    // 注入百度系 cookie（Playwright 访问百度盘用）
+    const pwCookies = cookieData.cookies
+      ?.filter((c: any) => c.domain?.includes('baidu'))
+      ?.map((c: any) => ({
+        name: c.name, value: c.value, domain: c.domain,
+        path: c.path || '/', httpOnly: c.httpOnly || false, secure: c.secure || false,
+        sameSite: 'Lax' as const,
+      })) || []
 
     const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] })
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, acceptDownloads: true })
