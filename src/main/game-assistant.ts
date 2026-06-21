@@ -2,7 +2,7 @@
  * 游戏助手模块 — MAA (明日方舟) + ALAS (碧蓝航线) 集成
  *
  * 两者均通过 ADB 控制模拟器，提供截图/OCR/点击自动化。
- * 此模块将其作为子进程管理，通过 ClaudeMate 面板控制。
+ * 此模块将其作为子进程管理，通过 NAVI 面板控制。
  */
 import { spawn, execSync, type ChildProcess } from 'child_process'
 import { existsSync } from 'fs'

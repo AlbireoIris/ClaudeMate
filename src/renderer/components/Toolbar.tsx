@@ -18,9 +18,9 @@ const Toolbar: React.FC = () => {
       } as React.CSSProperties}
     >
       <div className="flex items-center gap-2.5">
-        <img src={logo} alt="ClaudeMate" className="w-5 h-5 rounded-md shrink-0" />
+        <img src={logo} alt="NAVI" className="w-5 h-5 rounded-md shrink-0" />
         <span className="text-xs font-medium tracking-wide" style={{ color: 'var(--text-secondary)' }}>
-          ClaudeMate
+          NAVI
         </span>
       </div>
 

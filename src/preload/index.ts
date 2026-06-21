@@ -221,6 +221,30 @@ const electronAPI = {
     return () => ipcRenderer.removeListener('game:alasLog', handler)
   },
 
+  // === 思考范式 ===
+
+  saveParadigm: (data: any): Promise<boolean> =>
+    ipcRenderer.invoke('paradigm:save', data),
+
+  // === 文件夹对话框 ===
+
+  openFolderDialog: (): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:openFolder'),
+
+  // === 禁入规则 ===
+
+  getDenyRules: (): Promise<any[]> =>
+    ipcRenderer.invoke('config:getDenyRules'),
+
+  addDenyRule: (path: string, denyRead: boolean, denyWrite: boolean): Promise<any> =>
+    ipcRenderer.invoke('config:addDenyRule', path, denyRead, denyWrite),
+
+  removeDenyRule: (id: string): Promise<boolean> =>
+    ipcRenderer.invoke('config:removeDenyRule', id),
+
+  updateDenyRule: (id: string, patch: any): Promise<any> =>
+    ipcRenderer.invoke('config:updateDenyRule', id, patch),
+
   // === 下载管道 ===
 
   runDownloadPipeline: (pageUrl: string): Promise<any> =>

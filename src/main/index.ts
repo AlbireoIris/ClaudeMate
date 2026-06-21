@@ -62,7 +62,7 @@ function createWindow(): void {
     minWidth: 400,
     minHeight: 300,
     frame: false,
-    title: 'ClaudeMate',
+    title: 'NAVI',
     backgroundColor: '#0f0f1a',
     ...(iconPath ? { icon: iconPath } : {}),
     webPreferences: {
@@ -149,10 +149,12 @@ function createWindow(): void {
 }
 
 // 单例锁 — 只允许运行一个实例
+app.setAppUserModelId('com.iris.NAVI')
 const gotLock = app.requestSingleInstanceLock()
 
 if (!gotLock) {
-  app.quit()
+  // app.quit() 只退主进程，子进程变孤儿。必须用 exit 终止整个进程树
+  app.exit(0)
 } else {
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -161,8 +163,6 @@ if (!gotLock) {
       mainWindow.show()
     }
   })
-
-  app.setAppUserModelId('com.iris.ClaudeMate')
 
   app.whenReady().then(() => {
     registerIpcHandlers()

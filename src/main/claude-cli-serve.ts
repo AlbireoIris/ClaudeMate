@@ -15,7 +15,7 @@ import { existsSync, writeFileSync, mkdirSync } from 'fs'
 import { join, dirname } from 'path'
 import { homedir } from 'os'
 import type { FileItem } from '../shared/types'
-import { getActiveProfile } from './config-store'
+import { getActiveProfile, getDenyRules } from './config-store'
 
 type ProgressCallback = (progress: number, message: string) => void
 type StreamCallback = (chunk: { type: 'thinking' | 'text'; text: string }) => void
@@ -54,7 +54,7 @@ function httpReq(method: string, port: number, path: string, body?: unknown): Pr
         'Content-Type': 'application/json; charset=utf-8',
         ...(buf ? { 'Content-Length': String(buf.length) } : {}),
       },
-      timeout: 30000,
+      timeout: 300000,
     }, (res) => {
       let chunks = ''
       res.on('data', (c: Buffer) => (chunks += c.toString()))
@@ -71,7 +71,7 @@ function httpReq(method: string, port: number, path: string, body?: unknown): Pr
   })
 }
 
-/** 写入 opencode 配置，确保模型可用 */
+/** 写入 opencode 配置 */
 function writeEngineConfig(profile: ReturnType<typeof getActiveProfile>): void {
   const configDir = join(homedir(), '.config', 'opencode')
   if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true })
@@ -83,7 +83,20 @@ function writeEngineConfig(profile: ReturnType<typeof getActiveProfile>): void {
   }
   const model = modelMap[profile.model] || 'deepseek/deepseek-v4-pro'
 
-  const config = { '$schema': 'https://opencode.ai/config.json', model }
+  // 权限层只负责不卡死，禁入规则走 CLAUDE.md 系统提示
+  const config = {
+    '$schema': 'https://opencode.ai/config.json',
+    model,
+    permission: {
+      external_directory: { '*': 'allow' },
+      read: { '*': 'allow' },
+      edit: { '*': 'allow' },
+    },
+    compaction: {
+      auto: true,
+      tail_turns: 2,
+    },
+  }
   writeFileSync(join(configDir, 'opencode.json'), JSON.stringify(config, null, 2), 'utf-8')
 }
 
@@ -103,9 +116,12 @@ function startServer(port = 0): Promise<number> {
 
     console.log('[ClaudeCLI] starting server:', OPENCODE_BIN, args.join(' '))
 
+    // 从 H:\ 启动，让 opencode 的 instance context 覆盖 H 盘根目录
+    // 这样文件浏览器中的所有文件夹都不会触发 external_directory 权限检查
     const child = spawn(OPENCODE_BIN, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env,
+      cwd: 'H:\\',
     })
 
     let resolved = false
@@ -173,7 +189,7 @@ async function ensureServer(): Promise<number> {
 
 interface ServeResponse {
   info?: { finish: string; tokens: { total: number }; providerID: string; modelID: string }
-  parts?: Array<{ type: string; text?: string; delta?: string; tool?: string }>
+  parts?: Array<{ type: string; text?: string; delta?: string; tool?: string; state?: string }>
 }
 
 function processResponse(
@@ -182,6 +198,8 @@ function processResponse(
   onProgress?: ProgressCallback,
 ): string {
   let fullText = ''
+  let toolCount = 0
+  let lastTool = ''
   if (!response.parts) return ''
 
   for (const part of response.parts) {
@@ -195,8 +213,18 @@ function processResponse(
       case 'text':
         if (part.text) {
           fullText += part.text
-          onStream?.({ type: 'text', text: part.text })
           onProgress?.(60, '💬 回复中...')
+        }
+        break
+      case 'tool':
+        toolCount++
+        if (part.tool) lastTool = part.tool
+        if (part.state === 'running') {
+          onProgress?.(40, `🔧 ${part.tool || 'tool'}...`)
+        } else if (part.state === 'completed') {
+          onProgress?.(50, `🔧 ${part.tool} 完成`)
+        } else if (part.state === 'error') {
+          fullText += `\n[${part.tool}] ❌ ${part.text || 'failed'}`
         }
         break
       case 'step-start':
@@ -209,7 +237,64 @@ function processResponse(
     }
   }
 
+  // 如果 AI 只调了工具没返回文本，给出摘要
+  if (!fullText && toolCount > 0) {
+    fullText = `(调用了 ${toolCount} 个工具: ${lastTool})`
+  }
+
   return fullText
+}
+
+// ═══ 主入口 ═══
+
+// ═══ 持久 Session ═══
+
+let activeSessionId: string | null = null
+let activeSessionWorkDir: string | null = null
+
+/** 重置 session（新对话） */
+export function resetSession(): void {
+  activeSessionId = null
+  activeSessionWorkDir = null
+  console.log('[NAVI] session reset')
+}
+
+/** 重启 opencode server（deny 规则变更后调用） */
+export function resetOpenCodeServer(): void {
+  if (serverProcess) {
+    serverProcess.kill()
+    serverProcess = null
+  }
+  serverReady = false
+  serverPort = 0
+  serverStarting = null
+  activeSessionId = null
+  activeSessionWorkDir = null
+  console.log('[NAVI] server reset for config reload')
+}
+
+async function getOrCreateSession(port: number, workDir: string, onStream?: StreamCallback): Promise<string | null> {
+  // 同目录复用 session
+  if (activeSessionId && activeSessionWorkDir === workDir) {
+    console.log('[ClaudeCLI] reusing session:', activeSessionId)
+    return activeSessionId
+  }
+
+  const sessionRes = await httpReq('POST', port, '/session', {
+    directory: workDir,
+  })
+
+  const id = sessionRes.data?.id
+  if (!id) {
+    const err = `创建会话失败: ${JSON.stringify(sessionRes.data).slice(0, 200)}`
+    onStream?.({ type: 'text', text: `❌ ${err}` })
+    return null
+  }
+
+  activeSessionId = id
+  activeSessionWorkDir = workDir
+  console.log('[ClaudeCLI] new session:', id, 'dir:', workDir)
+  return id
 }
 
 // ═══ 主入口 ═══
@@ -218,7 +303,7 @@ export async function executeClaudeTask(
   _taskId: string,
   _taskType: any,
   files: FileItem[],
-  history: { role: string; text: string }[],
+  _history: { role: string; text: string }[],  // opencode 自己管理上下文
   onProgress: ProgressCallback,
   onStream?: StreamCallback,
 ): Promise<string> {
@@ -232,16 +317,50 @@ export async function executeClaudeTask(
   const config = getActiveProfile()
   if (!config.apiKey || !config.baseURL) return '未配置 API Key。'
 
-  const sysHint = `【硬规则】
-1. 用中文回复。禁止只说"完成"——必须给出具体文件名、路径、执行结果。
-2. 所有写入/删除/修改操作仅限于 H: 盘。读取可以跨盘。
-3. 每完成一步必须汇报结果。`
-
-  const promptText = sysHint + '\n' + (userQuery || '你好')
+  // 构建用户消息：系统规则在 CLAUDE.md/AGENTS.md，禁入规则动态注入
+  const parts: string[] = []
+  // 加载思考范式
+  try {
+    const paradigmPath = join(__dirname, '../../config/paradigm.json')
+    const { existsSync: fe2, readFileSync: rf2 } = require('fs')
+    if (fe2(paradigmPath)) {
+      const paradigm = JSON.parse(rf2(paradigmPath, 'utf-8'))
+      if (paradigm.nodes?.length > 0) {
+        parts.push(`【思考范式: ${paradigm.name || '任务流程'}】`)
+        parts.push('遵循以下思考循环处理任务：')
+        for (const node of paradigm.nodes) {
+          const label = { input:'📥 输入', observe:'🔍 观察', decide:'🧠 决策', act:'⚡ 执行', reflect:'👁 反思', iterate:'🔄 迭代', done:'✅ 完成' }[node.kind] || node.kind
+          parts.push(`${label}: ${node.question}`)
+          parts.push(`  → ${node.guidance}`)
+        }
+        parts.push('每完成一步后判断：目标是否已达成？还需要什么？按范式决定下一步。')
+        parts.push('')
+      }
+    }
+  } catch {}
+  // 禁入规则
+  try {
+    const denyRules = getDenyRules()
+    if (denyRules.length > 0) {
+      parts.push('【访问控制策略】')
+      for (const r of denyRules) {
+        if (r.denyRead && r.denyWrite) parts.push('❌ ' + r.path + ' → 禁止读取和写入')
+        else if (r.denyRead) parts.push('❌ ' + r.path + ' → 仅禁止读取（允许写入）')
+        else if (r.denyWrite) parts.push('❌ ' + r.path + ' → 仅禁止写入（允许读取）')
+      }
+      parts.push('你只能拒绝策略中明确禁止的操作。未被禁止的操作视为允许。')
+      parts.push('')
+    }
+  } catch {}
+  parts.push(userQuery || '你好')
+  const realFiles = files.filter(f => !f.path.startsWith('__query__:'))
+  if (realFiles.length > 0) {
+    parts.unshift('📎 ' + realFiles.map(f => f.name).join(', '))
+  }
+  const promptText = parts.join('\n')
 
   // 工作目录
   let workDir = 'H:\\'
-  const realFiles = files.filter(f => !f.path.startsWith('__query__:'))
   if (realFiles.length > 0) {
     const { existsSync: fe, statSync: st } = require('fs')
     const p = realFiles[0].path
@@ -250,33 +369,16 @@ export async function executeClaudeTask(
 
   try {
     const port = await ensureServer()
-    console.log('[ClaudeCLI] server port:', port)
+    console.log('[NAVI] server port:', port)
 
-    onProgress(2, '创建会话...')
+    onProgress(2, '创建/复用会话...')
+    const sessionId = await getOrCreateSession(port, workDir, onStream)
+    if (!sessionId) return ''
 
-    // 1. 创建 Session
-    const sessionRes = await httpReq('POST', port, '/session', {
-      directory: workDir,
-    })
-
-    const sessionId = sessionRes.data?.id
-    if (!sessionId) {
-      const err = `创建会话失败: ${JSON.stringify(sessionRes.data).slice(0, 200)}`
-      onStream?.({ type: 'text', text: `❌ ${err}` })
-      return ''
-    }
-
-    console.log('[ClaudeCLI] session:', sessionId)
-
-    // 2. 发送 Prompt
     onProgress(3, '发送消息...')
-
     const promptRes = await httpReq(
       'POST', port, `/session/${sessionId}/message`,
-      {
-        parts: [{ type: 'text', text: promptText }],
-        resume: true,
-      },
+      { parts: [{ type: 'text', text: promptText }], resume: true },
     )
 
     if (promptRes.status !== 200 || promptRes.data?.name === 'UnknownError') {
@@ -285,17 +387,16 @@ export async function executeClaudeTask(
       return ''
     }
 
-    // 3. 处理响应
     onProgress(4, '等待 AI 响应...')
+    console.log('[NAVI] text parts:', (promptRes.data?.parts || []).filter((p: any) => p.type === 'text').length)
     const fullText = processResponse(promptRes.data, onStream, onProgress)
-
-    console.log('[ClaudeCLI] response model:', promptRes.data?.info?.providerID + '/' + promptRes.data?.info?.modelID)
-    console.log('[ClaudeCLI] tokens:', promptRes.data?.info?.tokens?.total)
+    console.log('[NAVI] model:', promptRes.data?.info?.providerID + '/' + promptRes.data?.info?.modelID)
 
     return fullText || '(无输出)'
 
   } catch (e: any) {
-    console.error('[ClaudeCLI] error:', e.message)
+    console.error('[NAVI] error:', e.message)
+    resetSession()
     onStream?.({ type: 'text', text: `❌ 请求失败: ${e.message}` })
     return ''
   }

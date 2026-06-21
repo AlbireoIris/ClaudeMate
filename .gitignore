@@ -14,3 +14,7 @@ test-*.mjs
 fetch_with_*.mjs
 decrypt_cookies.mjs
 H:/downloads/
+*.bak
+*.dev-backup
+opencode-engine.exe
+config/cc-config.conf

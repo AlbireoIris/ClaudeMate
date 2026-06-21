@@ -1,10 +1,18 @@
 import React, { useCallback, useState, useRef, useEffect } from 'react'
-import { Send, Paperclip, Loader, X, FileText } from 'lucide-react'
+import { Send, Paperclip, Loader, X, FileText, Square } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useTaskStore } from '../stores/taskStore'
 import { useAppStore } from '../stores/appStore'
+import ToolDock from './ToolDock'
 import Sidebar from './Sidebar'
+import DenyPanel from './DenyPanel'
+import AdbFloat from './AdbFloat'
+import ScraperFloat from './ScraperFloat'
+import PipelineFloat from './PipelineFloat'
+import HistoryFloat from './HistoryFloat'
+// ParadigmEditor 暂移除, 待重新设计
 import SettingsBar from './SettingsBar'
+import WorkflowDisplay, { type WfNodeState } from './WorkflowDisplay'
 import type { FileItem } from '../../shared/types'
 
 function now() { return new Date().toISOString() }
@@ -31,6 +39,8 @@ const MainArea: React.FC = () => {
   const [progress, setProgress] = useState(0)
   const [progressMsg, setProgressMsg] = useState('')
   const [showProgress, setShowProgress] = useState(false)
+  const [wfNodes, setWfNodes] = useState<WfNodeState[]>([])
+  const [showWorkflow, setShowWorkflow] = useState(false)
   const streamingTaskRef = useRef<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -115,6 +125,14 @@ const MainArea: React.FC = () => {
     setInputValue('')
     clearFiles()
     const taskId = addTask('smart-analyze', taskFiles)
+    // 初始化工作流节点
+    setWfNodes([
+      { id: 'input', label: '分析', type: 'observe', status: 'pending' },
+      { id: 'decide', label: '决策', type: 'decide', status: 'pending' },
+      { id: 'act', label: '执行', type: 'action', status: 'pending' },
+      { id: 'reflect', label: '反思', type: 'reflect', status: 'pending' },
+    ])
+    setShowWorkflow(true)
     // 传递最近 20 条聊天记录作为上下文
     const recentHistory = chatMessages.slice(-20).map(m => ({ role: m.role, text: m.text }))
     setTimeout(() => executeTask(taskId, recentHistory), 50)
@@ -144,7 +162,14 @@ const MainArea: React.FC = () => {
 
   return (
     <main className="flex-1 relative flex flex-col min-h-0 overflow-hidden" style={{ backgroundColor: 'var(--bg-root)' }}>
-      <Sidebar />
+      <ToolDock initialOrder={['deny', 'adb', 'scraper', 'pipeline', 'history', 'files']}>
+        <Sidebar />
+        <DenyPanel />
+        <AdbFloat />
+        <ScraperFloat />
+        <PipelineFloat />
+        <HistoryFloat />
+      </ToolDock>
 
       <div
         className={`flex-1 flex flex-col min-h-0 relative px-3 pt-3 ${chatMessages.length === 0 ? 'justify-center' : ''}`}
@@ -171,7 +196,7 @@ const MainArea: React.FC = () => {
             {chatMessages.length === 0 && !isProcessing && (
               <div className="flex flex-col items-center justify-center h-full text-center select-none">
                 <h2 className="text-lg font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>
-                  ClaudeMate
+                  NAVI
                 </h2>
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
                   你的桌面智能文件助手
@@ -242,6 +267,17 @@ const MainArea: React.FC = () => {
                 disabled={isProcessing}
                 className="flex-1 bg-transparent px-2 py-1.5 text-sm outline-none disabled:opacity-30"
                 style={{ color: 'var(--text-primary)' }} />
+              {isProcessing && (
+                <button onClick={() => {
+                  useTaskStore.getState().updateTask(activeTaskId || '', { status: 'error', message: '用户取消' })
+                  useTaskStore.setState({ isProcessing: false, activeTaskId: null })
+                }}
+                  className="p-2 rounded-lg shrink-0 transition-all"
+                  style={{ backgroundColor: 'var(--danger)', color: '#fff' }}
+                  title="停止">
+                  <Square size={16} />
+                </button>
+              )}
               <button onClick={sendMessage}
                 disabled={isProcessing || (!inputValue.trim() && pendingFiles.length === 0)}
                 className="p-2 rounded-lg shrink-0 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
@@ -252,6 +288,9 @@ const MainArea: React.FC = () => {
           </div>
 
           <SettingsBar />
+
+          {/* 工作流可视化 */}
+          <WorkflowDisplay nodes={wfNodes} visible={showWorkflow} onClose={() => setShowWorkflow(false)} />
         </div>
       </div>
     </main>

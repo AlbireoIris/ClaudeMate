@@ -150,6 +150,42 @@ export function removeStoredFolder(folderId: string): boolean {
   return true
 }
 
+// ---- 禁入规则 ----
+
+import type { DenyRule } from '../shared/config-types'
+
+export function getDenyRules(): DenyRule[] {
+  return loadConfig().denyRules
+}
+
+export function addDenyRule(path: string, denyRead: boolean, denyWrite: boolean): DenyRule {
+  const config = loadConfig()
+  const id = `deny-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  const rule: DenyRule = { id, path, denyRead, denyWrite }
+  config.denyRules.push(rule)
+  saveConfig(config)
+  return rule
+}
+
+export function removeDenyRule(id: string): boolean {
+  const config = loadConfig()
+  const index = config.denyRules.findIndex(r => r.id === id)
+  if (index === -1) return false
+  config.denyRules.splice(index, 1)
+  saveConfig(config)
+  return true
+}
+
+export function updateDenyRule(id: string, patch: Partial<Pick<DenyRule, 'denyRead' | 'denyWrite'>>): DenyRule | null {
+  const config = loadConfig()
+  const rule = config.denyRules.find(r => r.id === id)
+  if (!rule) return null
+  if (patch.denyRead !== undefined) rule.denyRead = patch.denyRead
+  if (patch.denyWrite !== undefined) rule.denyWrite = patch.denyWrite
+  saveConfig(config)
+  return rule
+}
+
 // ---- Claude / Profiles ----
 
 import type { ClaudeProfile } from '../shared/config-types'

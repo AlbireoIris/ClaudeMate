@@ -11,7 +11,7 @@ export function stringifyConfig(config: AppConfig): string {
   const lines: string[] = []
 
   lines.push('# ============================================')
-  lines.push('#  ClaudeMate 配置文件')
+  lines.push('#  NAVI 配置文件')
   lines.push('#  修改后重启应用即可生效')
   lines.push('# ============================================')
   lines.push('')
@@ -56,6 +56,21 @@ export function stringifyConfig(config: AppConfig): string {
     })
   }
 
+  // 禁入目录
+  lines.push('# --- 目录访问控制 ---')
+  lines.push('# deny_read=true  禁止读取')
+  lines.push('# deny_write=true 禁止写入')
+  lines.push('')
+  if (config.denyRules.length > 0) {
+    config.denyRules.forEach((r, i) => {
+      lines.push(`deny.${i}.id = ${r.id}`)
+      lines.push(`deny.${i}.path = ${r.path}`)
+      lines.push(`deny.${i}.deny_read = ${r.denyRead}`)
+      lines.push(`deny.${i}.deny_write = ${r.denyWrite}`)
+      lines.push('')
+    })
+  }
+
   return lines.join('\n') + '\n'
 }
 
@@ -65,6 +80,7 @@ export function parseConfig(raw: string): AppConfig {
   const config = getDefaultConfig()
   const profileMap = new Map<number, Partial<Record<keyof ClaudeProfile, string>>>()
   const folders: { name: string; path: string }[] = []
+  const denyRules: { id?: string; path: string; denyRead: boolean; denyWrite: boolean }[] = []
 
   for (const line of raw.split('\n')) {
     const trimmed = line.trim()
@@ -119,6 +135,19 @@ export function parseConfig(raw: string): AppConfig {
       if (!folders[idx]) folders[idx] = { name: '', path: '' }
       const prop = fm[2] as 'name' | 'path'
       folders[idx][prop] = value
+      continue
+    }
+
+    // 禁入目录
+    const dm = key.match(/^deny\.(\d+)\.(id|path|deny_read|deny_write)$/)
+    if (dm) {
+      const idx = parseInt(dm[1], 10)
+      if (!denyRules[idx]) denyRules[idx] = { path: '', denyRead: false, denyWrite: false }
+      const prop = dm[2]
+      if (prop === 'id') denyRules[idx].id = value
+      else if (prop === 'path') denyRules[idx].path = value
+      else if (prop === 'deny_read') denyRules[idx].denyRead = value === 'true'
+      else if (prop === 'deny_write') denyRules[idx].denyWrite = value === 'true'
     }
   }
 
@@ -149,6 +178,17 @@ export function parseConfig(raw: string): AppConfig {
       id: `folder-cfg-${i}`,
       name: f.name,
       path: f.path
+    }))
+  }
+
+  // 组装禁入规则
+  const validDenyRules = denyRules.filter(r => r.path)
+  if (validDenyRules.length > 0) {
+    config.denyRules = validDenyRules.map((r, i) => ({
+      id: r.id || `deny-${Date.now()}-${i}`,
+      path: r.path,
+      denyRead: r.denyRead,
+      denyWrite: r.denyWrite,
     }))
   }
 

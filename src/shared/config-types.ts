@@ -27,11 +27,20 @@ export interface ClaudeProfile {
   thinking: boolean
 }
 
+/** 目录禁入规则 */
+export interface DenyRule {
+  id: string
+  path: string
+  denyRead: boolean
+  denyWrite: boolean
+}
+
 /** 完整应用配置（用户可编辑） */
 export interface AppConfig {
   theme: Theme
   window: WindowConfig
   folders: FavoriteFolder[]
+  denyRules: DenyRule[]
   claude: {
     activeProfile: number
     profiles: ClaudeProfile[]
@@ -68,6 +77,7 @@ export function getDefaultConfig(): AppConfig {
     theme: 'dark',
     window: { ...DEFAULT_WINDOW },
     folders: [],
+    denyRules: [],
     claude: {
       activeProfile: 0,
       profiles: [getDefaultProfile()]

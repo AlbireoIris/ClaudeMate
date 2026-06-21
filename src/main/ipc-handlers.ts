@@ -3,8 +3,8 @@ import { join as pathJoin, dirname as pathDirname } from 'path'
 import { app, ipcMain, dialog, shell, BrowserWindow } from 'electron'
 import { IPC_CHANNELS } from '../shared/types'
 import { moveFile, copyFile, getFileInfo, listDirectory } from './file-system'
-import { executeClaudeTask } from './claude-cli-serve'
-import { getStoredFolders, addStoredFolder, removeStoredFolder, loadConfig, updateConfig, switchProfile, getProfiles, getActiveProfile, updateActiveProfileField } from './config-store'
+import { executeClaudeTask, resetOpenCodeServer } from './claude-cli-serve'
+import { getStoredFolders, addStoredFolder, removeStoredFolder, loadConfig, updateConfig, switchProfile, getProfiles, getActiveProfile, updateActiveProfileField, getDenyRules, addDenyRule, removeDenyRule, updateDenyRule } from './config-store'
 import { getMainWindow } from './index'
 import * as SessionStore from './session-store'
 import * as Adb from './adb'
@@ -171,6 +171,52 @@ export function registerIpcHandlers(): void {
   ipcMain.handle('profile:updateField', async (_event, field: string, value: any) => {
     updateActiveProfileField(field as any, value)
     return getActiveProfile()
+  })
+
+  // === 禁入规则 ===
+
+  ipcMain.handle('config:getDenyRules', async () => {
+    return getDenyRules()
+  })
+
+  ipcMain.handle('config:addDenyRule', async (_event, path: string, denyRead: boolean, denyWrite: boolean) => {
+    const result = addDenyRule(path, denyRead, denyWrite)
+    // 规则变更后重启 opencode server 使 opencode.json 生效
+    try { resetOpenCodeServer() } catch {}
+    return result
+  })
+
+  ipcMain.handle('config:removeDenyRule', async (_event, id: string) => {
+    const result = removeDenyRule(id)
+    try { resetOpenCodeServer() } catch {}
+    return result
+  })
+
+  ipcMain.handle('config:updateDenyRule', async (_event, id: string, patch: any) => {
+    const result = updateDenyRule(id, patch)
+    try { resetOpenCodeServer() } catch {}
+    return result
+  })
+
+  // 保存思考范式
+  ipcMain.handle('paradigm:save', async (_event, data: any) => {
+    try {
+      const { writeFileSync: wf, existsSync: fe2, mkdirSync: md2 } = require('fs')
+      const { join: jn2 } = require('path')
+      const configDir = jn2(__dirname, '../../config')
+      if (!fe2(configDir)) md2(configDir, { recursive: true })
+      wf(jn2(configDir, 'paradigm.json'), JSON.stringify(data, null, 2), 'utf-8')
+      return true
+    } catch { return false }
+  })
+
+  // 选择文件夹对话框（仅返回路径，不加入收藏）
+  ipcMain.handle('dialog:openFolder', async () => {
+    const win = getMainWindow()
+    if (!win) return null
+    const result = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
   })
 
   // 用默认程序打开文件
